@@ -149,21 +149,48 @@ isFullRebuild: true only for auth, database, or structural changes.`
 
       const currentContent = fs.readFileSync(fullPath, 'utf8')
 
-      const systemPrompt = `You are a precise code editor. 
+      const systemPrompt = `You are a precise code editor.
 Modify ONLY what the user asks. Change nothing else.
-Return ONLY the complete modified file content. No explanation. No markdown.`
+Return ONLY the complete modified file content. No explanation. No markdown.
+The file must remain valid TypeScript/TSX. Never truncate. Never omit imports.`
 
       try {
         const newContent = await streamFromLLM(
           `File: ${filePath}\n\nUser request: "${prompt}"\n\nCurrent file:\n${currentContent.slice(0, 6000)}`,
           provider, apiKey, systemPrompt,
-          { maxOutputTokens: 4000 }
+          { maxOutputTokens: 6000 }
         )
 
-        // Safety: only write if the output looks like valid code
-        if (newContent.length > 50 && (newContent.includes('import') || newContent.includes('export') || newContent.includes('const'))) {
-          fs.writeFileSync(fullPath, newContent, 'utf8')
+        const stripped = newContent.replace(/```[\w]*\n?/g, '').replace(/\n?```/g, '').trim()
+
+        // 1. Must have meaningful content
+        if (stripped.length < 50) continue
+
+        // 2. Must have a valid export
+        const hasExport = stripped.includes('export default') || stripped.includes('export function') || stripped.includes('export const')
+        if (!hasExport) continue
+
+        // 3. Braces must balance — mismatched = truncated or hallucinated
+        const openBraces = (stripped.match(/{/g) || []).length
+        const closeBraces = (stripped.match(/}/g) || []).length
+        if (Math.abs(openBraces - closeBraces) > 2) continue
+
+        // 4. Must be at least 30% the size of original — not a stub replacement
+        if (stripped.length < currentContent.length * 0.3) continue
+
+        // 5. Write with backup — restore original if write fails
+        const backupPath = fullPath + '.zozo-backup'
+        fs.writeFileSync(backupPath, currentContent, 'utf8')
+
+        try {
+          fs.writeFileSync(fullPath, stripped, 'utf8')
           modified.push(filePath)
+          if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath)
+        } catch {
+          if (fs.existsSync(backupPath)) {
+            fs.writeFileSync(fullPath, currentContent, 'utf8')
+            fs.unlinkSync(backupPath)
+          }
         }
       } catch {}
     }

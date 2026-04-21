@@ -245,18 +245,68 @@ export class QualityGate {
       layoutStructure, performanceSafe, noDesignChaos
     ]
 
-    const codeScore = Math.round(originalScores.reduce((a, b) => a + b, 0) / originalScores.length)
-    const designScore = Math.round(designScores.reduce((a, b) => a + b, 0) / designScores.length)
-    const overall = Math.round((codeScore + designScore) / 2)
+    // keyword-based design score — kept as designScore (50% weight)
+    const designScore = Math.round(
+      [...originalScores, ...designScores].reduce((a, b) => a + b, 0) /
+      (originalScores.length + designScores.length)
+    )
+
+    // REAL code score — measures actual correctness, not keyword presence
+    // 1. Export completeness: % of component .tsx files that have export default
+    const componentFiles = tsxFiles.filter(f => f.includes('components'))
+    const withExportDefault = componentFiles.filter(f => {
+      try { return fs.readFileSync(f, 'utf8').includes('export default') } catch { return false }
+    })
+    const exportCompleteness = componentFiles.length > 0
+      ? Math.round((withExportDefault.length / componentFiles.length) * 100)
+      : 100
+
+    // 2. Critical file structure: tsconfig, package.json, page.tsx, layout.tsx must exist
+    const hasTsConfig = fs.existsSync(path.join(workspacePath, 'tsconfig.json'))
+    const hasPackageJson = fs.existsSync(path.join(workspacePath, 'package.json'))
+    const hasPageTsx = fs.existsSync(path.join(workspacePath, 'app', 'page.tsx'))
+    const hasLayoutTsx = fs.existsSync(path.join(workspacePath, 'app', 'layout.tsx'))
+    const structureScore = [hasTsConfig, hasPackageJson, hasPageTsx, hasLayoutTsx]
+      .filter(Boolean).length * 25
+
+    // 3. No truncated files: tsx files must end with } or /> not mid-expression
+    const truncatedFiles = componentFiles.filter(f => {
+      try {
+        const content = fs.readFileSync(f, 'utf8').trimEnd()
+        return content.length > 100 &&
+          !content.endsWith('}') && !content.endsWith('/>') &&
+          !content.endsWith(';') && !/export\s+default\s+\w+\s*;?\s*$/.test(content)
+      } catch { return false }
+    })
+    const truncationScore = componentFiles.length > 0
+      ? Math.round(((componentFiles.length - truncatedFiles.length) / componentFiles.length) * 100)
+      : 100
+
+    const realCodeScore = Math.round(
+      (exportCompleteness * 0.4) + (structureScore * 0.4) + (truncationScore * 0.2)
+    )
+
+    // Final: 50% real code correctness + 50% design keywords
+    const overall = Math.round((realCodeScore * 0.5) + (designScore * 0.5))
+    const codeScore = realCodeScore
+
+    if (truncatedFiles.length > 0) {
+      issues.push(`${truncatedFiles.length} truncated file(s): ${truncatedFiles.map(f => path.basename(f)).join(', ')}`)
+    }
+    if (!hasPageTsx) issues.push('Missing app/page.tsx — build will fail to render')
+    if (!hasLayoutTsx) issues.push('Missing app/layout.tsx — Next.js requires this file')
+    if (exportCompleteness < 80) {
+      issues.push(`${componentFiles.length - withExportDefault.length} component(s) missing export default`)
+    }
 
     const cfg = vscode.workspace.getConfiguration('zozo')
     const threshold = cfg.get<number>('qualityThreshold', 65)
 
     let verdict: 'WORLD_CLASS' | 'ACCEPTABLE' | 'NEEDS_WORK'
-    // AFTER — designScore >= 80 was too strict, 70 is realistic
     if (overall >= Math.min(threshold + 20, 90) && designScore >= 70) verdict = 'WORLD_CLASS'
     else if (overall >= threshold) verdict = 'ACCEPTABLE'
-    else verdict = 'NEEDS_WORK'
+    else if (realCodeScore < 60) verdict = 'NEEDS_WORK'  // real breakage only — retry worthwhile
+    else verdict = 'ACCEPTABLE'  // design keywords missing but code is valid — no expensive retry
 
     const categories = {
       darkTheme, hasAnimations, hasGradients, hasGlassmorphism,

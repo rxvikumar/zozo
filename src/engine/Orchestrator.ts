@@ -583,7 +583,6 @@ export async function runOrchestration(
     outputChannel.appendLine(
       `[ZOZO] ✅ Profile (user→auto): style=${autoProfile.style} anim=${autoProfile.animation} depth=${autoProfile.depth} inspiration=${autoProfile.inspiration.join(',')}`
     )
-    outputChannel.appendLine(`[ZOZO] \u2705 Profile: style=${autoProfile.style} animation=${autoProfile.animation} depth=${autoProfile.depth} inspiration=${autoProfile.inspiration.join(',')}`)
 
     // Efficient mode: Builder uses user's provider+apiKey directly (line below)
     // Planner+Design already routed to Gemini via cheapCtxFactory + cheapProvider
@@ -631,8 +630,8 @@ export async function runOrchestration(
       const reviewPrompt = `Review this generated Next.js code XML and fix ANY syntax errors, unclosed JSX tags, unterminated strings, or truncated files. Return the complete fixed XML only:\n\n${builderOutput.slice(0, 15000)}`
       const reviewedCode = await streamFromLLM(
         reviewPrompt,
-        'gemini',
-        options?.geminiKey || apiKey,
+        provider,   // use actual pipeline provider — was hardcoded 'gemini', caused 401 for Anthropic/OpenAI users
+        apiKey,     // use actual API key — was using geminiKey which may be undefined
         'You are a code reviewer. Fix all syntax errors in the XML. Return only the fixed XML. Never truncate.',
         { maxOutputTokens: 8000 }
       )
@@ -640,8 +639,8 @@ export async function runOrchestration(
         builderOutput = reviewedCode
         outputChannel.appendLine('[REVIEW] \u2705 Code review pass complete')
       }
-    } catch {
-      outputChannel.appendLine('[REVIEW] \u26A0\uFE0F Review skipped')
+    } catch (reviewErr: unknown) {
+      outputChannel.appendLine(`[REVIEW] \u26A0\uFE0F Review skipped: ${reviewErr instanceof Error ? reviewErr.message : String(reviewErr)}`)
     }
 
     // Builder step complete — quality gate runs AFTER files are written to disk
@@ -887,6 +886,25 @@ export async function runOrchestration(
     saveProjectState(workspaceRoot, projectState)
     outputChannel.appendLine('[ZOZO] \uD83E\uDDE0 Project memory saved \u2192 .zozo-memory.json')
 
+    // ── [14.2] CODEGUARD POST-WRITE HEALING — activates healing pipeline that was previously dead code ──
+    logger.step('[14.2] CodeGuard — self-repair + static templates + export verify');
+    try {
+      const { repairWrittenFiles, ensureStaticTemplates, verifyExports, scrubEmbeddedXML } = await import('./CodeGuard');
+
+      const xmlScrubbed = scrubEmbeddedXML(workspaceRoot, outputChannel);
+      if (xmlScrubbed > 0) logger.info(`CodeGuard 1b: scrubbed ${xmlScrubbed} file(s) with embedded XML`);
+
+      const repaired = repairWrittenFiles(filesWritten, workspaceRoot, outputChannel);
+      logger.info(`CodeGuard repair: ${repaired}/${filesWritten.length} file(s) fixed`);
+
+      ensureStaticTemplates(workspaceRoot, outputChannel);
+
+      const exportFixed = verifyExports(workspaceRoot, outputChannel);
+      if (exportFixed > 0) logger.info(`CodeGuard exports: fixed ${exportFixed} missing export(s)`);
+    } catch (cgErr: unknown) {
+      logger.warning(`CodeGuard post-write: ${cgErr instanceof Error ? cgErr.message : String(cgErr)}`);
+    }
+
     // ── [14.1] PAGE.TSX FALLBACK — ensure page.tsx always exists ───────────
     const pagePath = path.join(workspaceRoot, 'app', 'page.tsx');
     if (!fs.existsSync(pagePath)) {
@@ -988,7 +1006,7 @@ export async function runOrchestration(
         }
 
         // Re-run the builder step with fix instructions via AgentContext
-        const builderCtx = ctxFactory.forBuilder(plan, blueprint, '', '', compacted.packageConstraints, fullFixPrompt)
+        const builderCtx = ctxFactory.forBuilder(plan, blueprint, '', '', compacted.packageConstraints, fullFixPrompt, template)
         builderOutput = await runBuilderAgentWithContext(builderCtx, plan, blueprint)
 
         logger.success(`Rebuild complete (${builderOutput.length} chars).`)
@@ -1097,7 +1115,7 @@ export async function runOrchestration(
         if (contractResult.fixPrompt) {
           try {
             const contractFixCtx = ctxFactory.forBuilder(
-              plan, blueprint, '', '', compacted.packageConstraints, contractResult.fixPrompt
+              plan, blueprint, '', '', compacted.packageConstraints, contractResult.fixPrompt, template
             )
             const contractFix = await runBuilderAgentWithContext(contractFixCtx, plan, blueprint)
             const contractValidated = importValidator.validate(contractFix)
@@ -1154,7 +1172,8 @@ export async function runOrchestration(
             plan, blueprint,
             fixCompacted.designRules, '',
             fixCompacted.packageConstraints,
-            fixCompacted.fixPrompt
+            fixCompacted.fixPrompt,
+            template
           )
           const fixOutput = await runBuilderAgentWithContext(fixCtx, plan, blueprint)
 
@@ -1338,7 +1357,7 @@ ${content}`
 
           // One fix attempt for runtime errors
           try {
-            const runtimeFixCtx = ctxFactory.forBuilder(plan, blueprint, '', '', compacted.packageConstraints, runtimeFixPrompt)
+            const runtimeFixCtx = ctxFactory.forBuilder(plan, blueprint, '', '', compacted.packageConstraints, runtimeFixPrompt, template)
             const runtimeFix = await runBuilderAgentWithContext(runtimeFixCtx, plan, blueprint)
             const runtimeUi = uiEngine.fix(runtimeFix)
             await executeActions(runtimeUi.xml, workspaceRoot, outputChannel, provider, apiKey)
@@ -1498,8 +1517,17 @@ ${content}`
 
     if (healthReport.readyToRun) {
       vscode.window.showInformationMessage(
-        `\u2705 ZOZO build complete \u2014 ${healthReport.score}/100 health. Ready: npm run dev`
-      )
+        `\u2705 ZOZO build complete \u2014 ${healthReport.score}/100 health. Ready: npm run dev`,
+        'Open Preview'
+      ).then(async choice => {
+        if (choice === 'Open Preview') {
+          const { getLivePreview } = await import('./LivePreview')
+          const preview = getLivePreview()
+          preview.start(workspaceRoot, outputChannel).catch(err => {
+            outputChannel.appendLine(`[ZOZO Preview] ${err instanceof Error ? err.message : String(err)}`)
+          })
+        }
+      })
     } else {
       vscode.window.showWarningMessage(
         `\u26A0\uFE0F ZOZO build complete with issues \u2014 check Build Health report`

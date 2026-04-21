@@ -27,6 +27,7 @@ export interface BuilderContext extends BaseAgentContext {
   readonly memoryContext: string
   readonly packageConstraints: string  // anti-hallucination constraint block
   readonly fixPrompt?: string   // only set on quality gate retries
+  readonly template?: string    // detected template type (restaurant/portfolio/saas/etc)
 }
 
 export interface ValidatorContext extends BaseAgentContext {
@@ -81,9 +82,10 @@ export class AgentContextFactory {
     designRulesSection: string,
     memoryContext: string,
     packageConstraints: string,
-    fixPrompt?: string
+    fixPrompt?: string,
+    template?: string
   ): BuilderContext {
-    return Object.freeze({ ...this.base, plan, designBlueprint, designRulesSection, memoryContext, packageConstraints, fixPrompt })
+    return Object.freeze({ ...this.base, plan, designBlueprint, designRulesSection, memoryContext, packageConstraints, fixPrompt, template })
   }
 
   forValidator(builderOutput: string): ValidatorContext {

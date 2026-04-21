@@ -412,11 +412,11 @@ NEVER import from 'tailwindcss/plugin' — use the require() pattern instead.
 `;
 
 
-const INITIAL_BATCH_SIZE = 8;
+const INITIAL_BATCH_SIZE = 4;          // Was 8 — 4 files max per batch prevents truncation
 const BATCH_SIZE_LARGE = 50;
 const MAX_SINGLE_RETRIES = 3;
 const BATCH_DELAY_MS = 1000;
-const BUILDER_MAX_TOKENS = 4000;  // Hard cap per call. Hero gets its own separate 4000 budget.
+const BUILDER_MAX_TOKENS = 8192;       // Was 4000 — 4000 was ~250 tokens per file after system prompt = 12 lines
 
 function buildDesignContext(blueprint: DesignBlueprint): string {
   return `DESIGN: Colors ${blueprint.colorPalette.primary}/${blueprint.colorPalette.accent}, ` +
@@ -617,7 +617,7 @@ export async function runBuilderAgentWithContext(
     ctx.userPrompt,
     plan,
     designBlueprint,
-    'saas',  // template defaults — context doesn't carry template yet
+    ctx.template ?? 'saas',  // use real detected template — was hardcoded 'saas', breaks all retries
     ctx.provider,
     ctx.apiKey,
     ctx.designRulesSection,
@@ -805,9 +805,11 @@ Stars count MUST be 2000 not 5000 — performance.
         maxOutputTokens: group.tokens,
       })
       if (response && response.includes('<zozo_action')) {
-        // Quick validate before accepting
-        const hasUnclosedJSX = (response.match(/<[A-Z]/g) || []).length >
-          (response.match(/<\/[A-Z]/g) || []).length + 20
+        // Quick validate before accepting — excludes self-closing tags like <Stars />, <Canvas />
+        const openTags = (response.match(/<[A-Z][a-zA-Z]*[^/\n>]*>/g) || []).length
+        const closeTags = (response.match(/<\/[A-Z][a-zA-Z]*>/g) || []).length
+        const selfClosing = (response.match(/<[A-Z][a-zA-Z]*[^>]*\/>/g) || []).length
+        const hasUnclosedJSX = (openTags - selfClosing) > (closeTags + 5)  // was +20, now +5
         const isTruncated = !response.includes('export default') &&
           group.label.startsWith('components/')
 

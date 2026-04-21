@@ -945,7 +945,29 @@ function saveFirecrawl() {
     }
   );
 
-  context.subscriptions.push(setApiKeyCmd, testCoreLoopCmd, promptAICmd, chatCmd, showCostCmd, resumeBuildCmd, forceUnlockCmd, inspectBuildCmd, cancelBuildCmd, openSettingsCmd, setProfileCmd, setGeminiKeyCmd);
+  // ── Live Preview command ─────────────────────────────────────────────────
+  const previewCmd = vscode.commands.registerCommand(
+    'zozo.preview',
+    async () => {
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders || workspaceFolders.length === 0) {
+        vscode.window.showErrorMessage('❌ ZOZO: No workspace folder open.');
+        return;
+      }
+      const workspaceRoot = workspaceFolders[0].uri.fsPath;
+      const outputChannel = vscode.window.createOutputChannel('ZOZO Preview');
+      outputChannel.show(true);
+      const { getLivePreview } = await import('./engine/LivePreview');
+      const preview = getLivePreview();
+      try {
+        await preview.start(workspaceRoot, outputChannel);
+      } catch (err: unknown) {
+        vscode.window.showErrorMessage(`ZOZO Preview: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  context.subscriptions.push(setApiKeyCmd, testCoreLoopCmd, promptAICmd, chatCmd, showCostCmd, resumeBuildCmd, forceUnlockCmd, inspectBuildCmd, cancelBuildCmd, openSettingsCmd, setProfileCmd, setGeminiKeyCmd, previewCmd);
 
   // Register ZOZO as a sidebar WebviewView (shows in activity bar)
   const chatSidebarProvider = new ChatSidebarProvider(context);

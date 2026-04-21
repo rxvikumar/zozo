@@ -820,7 +820,7 @@ function parseBuildErrors(output: string): BuildError[] {
   }
   return errors;
 }
-function selfRepairFile(
+export function selfRepairFile(
   fullPath: string,
   _errors: BuildError[],   // kept for interface compat but not relied on
   _workspaceRoot: string,
@@ -1121,6 +1121,80 @@ ${content}`;
 
 
 // â”€â”€â”€ Main Entry: Run All Stages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+// ─── Exported Stage Functions (called directly from Orchestrator) ─────────────────
+
+/** Stage 1c: Write known-good ErrorBoundary static template */
+export function ensureStaticTemplates(
+  workspaceRoot: string,
+  channel: vscode.OutputChannel
+): number {
+  const ERRORBOUNDARY_TEMPLATE = `'use client'
+
+import React from 'react'
+
+export default class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+  render() {
+    if (this.state.hasError) {
+      return <div className="p-8 text-center text-red-400">Something went wrong.</div>
+    }
+    return this.props.children
+  }
+}
+`;
+  const componentsDir = path.join(workspaceRoot, 'components');
+  if (!fs.existsSync(componentsDir)) return 0;
+  const errorBoundaryPath = path.join(componentsDir, 'ErrorBoundary.tsx');
+  fs.writeFileSync(errorBoundaryPath, ERRORBOUNDARY_TEMPLATE, 'utf-8');
+  channel.appendLine('[CODEGUARD] \u2705 Stage 1c: ErrorBoundary.tsx written (static template)');
+  return 1;
+}
+
+/** Stage 4: Verify all .tsx files have export default — fix if missing */
+export function verifyExports(
+  workspaceRoot: string,
+  channel: vscode.OutputChannel
+): number {
+  const issues: CodeGuardIssue[] = [];
+  const fixed = healExportMismatches(workspaceRoot, issues, channel);
+  if (fixed > 0) {
+    channel.appendLine(`[CODEGUARD] \u2705 Stage 4: Fixed ${fixed} missing export(s)`);
+  }
+  return fixed;
+}
+
+/** Sweep-repair specific files immediately after they are written to disk */
+export function repairWrittenFiles(
+  filesWritten: string[],
+  workspaceRoot: string,
+  channel: vscode.OutputChannel
+): number {
+  let fixed = 0;
+  const emptyErrors: BuildError[] = [];
+  for (const relPath of filesWritten) {
+    const absPath = path.join(workspaceRoot, relPath);
+    if (!fs.existsSync(absPath)) continue;
+    const ext = path.extname(absPath);
+    if (ext !== '.tsx' && ext !== '.jsx' && ext !== '.ts' && ext !== '.css') continue;
+    if (selfRepairFile(absPath, emptyErrors, workspaceRoot, channel)) {
+      fixed++;
+    }
+  }
+  if (fixed > 0) {
+    channel.appendLine(`[CODEGUARD] \u2705 Self-repair: ${fixed}/${filesWritten.length} file(s) fixed`);
+  }
+  return fixed;
+}
 
 export async function runCodeGuard(
   workspaceRoot: string,

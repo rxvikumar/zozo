@@ -71,6 +71,10 @@
       {
         "command": "zozo.setGeminiKey",
         "title": "ZOZO: Set Gemini API Key (Free)"
+      },
+      {
+        "command": "zozo.preview",
+        "title": "ZOZO: Open Live Preview"
       }
     ],
     "viewsContainers": {
@@ -133,8 +137,5 @@
     "esbuild": "^0.20.0",
     "typescript": "^5.3.3"
   },
-  "dependencies": {
-    "framer-motion": "^12.38.0",
-    "lucide-react": "^1.7.0"
-  }
+  "dependencies": {}
 }

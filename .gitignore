@@ -1,0 +1,14 @@
+node_modules/
+out/
+dist/
+.next/
+*.vsix
+.zozo-temp/
+.zozo-memory.json
+
+# Debug/build logs
+_scan.txt
+build_current.txt
+build_errors*.txt
+build_s*.txt
+tsc_errors*.txt

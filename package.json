@@ -1,0 +1,140 @@
+{
+  "name": "zozo-orchestrator",
+  "displayName": "ZOZO Orchestrator",
+  "description": "Deterministic AI orchestrator living natively inside VS Code",
+  "version": "0.1.0",
+  "publisher": "zozo",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "zozo.testCoreLoop",
+        "title": "ZOZO: Test Core Loop"
+      },
+      {
+        "command": "zozo.setApiKey",
+        "title": "ZOZO: Set API Key"
+      },
+      {
+        "command": "zozo.promptAI",
+        "title": "ZOZO: Prompt AI"
+      },
+      {
+        "command": "zozo.chat",
+        "title": "ZOZO: Chat"
+      },
+      {
+        "command": "zozo.showCost",
+        "title": "ZOZO: Show Cost & Token Usage"
+      },
+      {
+        "command": "zozo.resumeBuild",
+        "title": "ZOZO: Resume Last Build"
+      },
+      {
+        "command": "zozo.forceUnlock",
+        "title": "ZOZO: Force Unlock Pipeline (Recovery)"
+      },
+      {
+        "command": "zozo.inspectBuild",
+        "title": "ZOZO: Inspect Last Build"
+      },
+      {
+        "command": "zozo.cancelBuild",
+        "title": "ZOZO: Cancel Current Build"
+      },
+      {
+        "command": "zozo.openSettings",
+        "title": "ZOZO: Open Settings"
+      },
+      {
+        "command": "zozo.setProfile",
+        "title": "ZOZO: Set Profile & Brand Colors"
+      },
+      {
+        "command": "zozo.runTests",
+        "title": "ZOZO: Run Smoke Tests"
+      },
+      {
+        "command": "zozo.chatView.focus",
+        "title": "ZOZO: Open Chat Panel"
+      },
+      {
+        "command": "zozo.setGeminiKey",
+        "title": "ZOZO: Set Gemini API Key (Free)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "zozo-sidebar",
+          "title": "ZOZO",
+          "icon": "media/zozo-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "zozo-sidebar": [
+        {
+          "type": "webview",
+          "id": "zozo.chatView",
+          "name": "ZOZO Chat",
+          "icon": "media/zozo-icon.svg",
+          "contextualTitle": "ZOZO"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ZOZO",
+      "properties": {
+        "zozo.provider": {
+          "type": "string",
+          "default": "gemini",
+          "description": "Default LLM provider"
+        },
+        "zozo.model": {
+          "type": "string",
+          "default": "gemini-2.5-flash",
+          "description": "Default model"
+        },
+        "zozo.qualityThreshold": {
+          "type": "number",
+          "default": 65,
+          "description": "Quality gate minimum score (50-95)"
+        },
+        "zozo.firecrawlApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Optional: Firecrawl API key for real site extraction (free at firecrawl.dev — 500 pages/month free)"
+        },
+        "zozo.geminiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Optional: Gemini API key for free code repairs and Efficient mode (free at aistudio.google.com)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^1.7.0"
+  }
+}

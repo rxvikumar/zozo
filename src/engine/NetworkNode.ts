@@ -14,22 +14,18 @@ const DEFAULT_SYSTEM_PROMPT = `You are ZOZO, a deterministic VS Code orchestrato
 
 export const GEMINI_MODELS = {
   // ── FREE TIER (Normal mode — no billing required) ─────────────────────
-  /** [FREE] gemini-2.5-flash — default for Normal mode. 1M ctx, fast. */
-  FLASH_FREE:      'gemini-2.5-flash',
-  /** [FREE] gemini-2.5-flash-lite — fastest, most cost-efficient */
-  FLASH_LITE_FREE: 'gemini-2.5-flash-lite',
-  /** [FREE] gemini-2.5-pro — best free quality */
-  PRO_FREE:        'gemini-2.5-pro',
+  /** [FREE] gemini-1.5-flash — default for Normal mode. 1M ctx, fast, stable. */
+  FLASH_FREE:      'gemini-1.5-flash',
+  /** [FREE] gemini-1.5-flash-8b — fastest, cost-efficient */
+  FLASH_LITE_FREE: 'gemini-1.5-flash-8b',
+  /** [FREE] gemini-1.5-pro — best quality */
+  PRO_FREE:        'gemini-1.5-pro',
 
-  // ── PAID TIER (Ultra mode — billing required in Google AI Studio) ──────
-  /** [PAID] gemini-3.1-pro-preview — flagship Ultra model, 1M ctx, 65K out */
-  PRO_ULTRA:            'gemini-3.1-pro-preview',
-  /** [PAID] gemini-3-flash-preview — fast Ultra, frontier intelligence */
-  FLASH_ULTRA:          'gemini-3-flash-preview',
-  /** [PAID] gemini-3.1-flash-lite-preview — cost-efficient Ultra */
-  FLASH_LITE_ULTRA:     'gemini-3.1-flash-lite-preview',
-  /** [PAID] gemini-3.1-pro-preview-customtools — Ultra with custom tool use */
-  PRO_CUSTOMTOOLS_ULTRA:'gemini-3.1-pro-preview-customtools',
+  // ── PAID / FRONTIER TIER ──────
+  PRO_ULTRA:            'gemini-1.5-pro',
+  FLASH_ULTRA:          'gemini-2.0-flash',
+  FLASH_LITE_ULTRA:     'gemini-1.5-flash-8b',
+  PRO_CUSTOMTOOLS_ULTRA:'gemini-1.5-pro',
 } as const;
 
 export type GeminiModel = (typeof GEMINI_MODELS)[keyof typeof GEMINI_MODELS];
@@ -63,13 +59,21 @@ export function getEffectiveGeminiModel(): string {
   return _geminiModelOverride ?? DEFAULT_GEMINI_MODEL;
 }
 
+export function getExplicitGeminiOverride(): string | null { return _geminiModelOverride; }
+export function getExplicitAnthropicOverride(): string | null { return _anthropicModelOverride; }
+export function getExplicitOpenaiOverride(): string | null { return _openaiModelOverride; }
+
 // ─── Provider Interface ───────────────────────────────────────────────────────
 
 export interface LLMOptions {
-  /** Override the Gemini model (default: gemini-2.5-flash — FREE tier) */
-  geminiModel?: GeminiModel;
-  /** Max output tokens (default: 8192) */
   maxOutputTokens?: number;
+  /** Force a specific Gemini model (e.g. flash-lite for fast structured planning) */
+  geminiModel?: string;
+  onChunk?: (chunk: string) => void;
+  /** Enable extended thinking — lets the LLM reason before generating code */
+  thinking?: boolean;
+  /** Token budget for thinking (default: 4096). Higher = deeper reasoning, more cost. */
+  thinkingBudget?: number;
 }
 
 // ─── Rate Limit Retry ─────────────────────────────────────────────────────────
@@ -142,7 +146,18 @@ export async function streamFromLLM(
     case "gemini": {
       return withRateLimitRetry(async () => {
         const model = options.geminiModel ?? _geminiModelOverride ?? DEFAULT_GEMINI_MODEL;
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+
+        // Extended thinking: Gemini 2.5 Flash/Pro support thinkingConfig natively
+        const thinkingEnabled = options.thinking ?? false;
+        const thinkingBudget = options.thinkingBudget ?? 4096;
+
+        const generationConfig: Record<string, unknown> = {
+          maxOutputTokens: maxTokens,
+        };
+        if (thinkingEnabled) {
+          generationConfig.thinkingConfig = { thinkingBudget };
+        }
 
         const body = {
           contents: [
@@ -150,9 +165,7 @@ export async function streamFromLLM(
               parts: [{ text: `${systemPrompt}\n\n${prompt}` }],
             },
           ],
-          generationConfig: {
-            maxOutputTokens: maxTokens,
-          },
+          generationConfig,
         };
 
         const res = await fetch(endpoint, {
@@ -169,24 +182,57 @@ export async function streamFromLLM(
           throw new Error(`Gemini API error (HTTP ${res.status}) [${model}]: ${errText}`);
         }
 
-        const data = (await res.json()) as {
-          candidates?: Array<{
-            content?: { parts?: Array<{ text?: string }> };
-          }>;
-        };
-
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!text) {
-          throw new Error(`Gemini [${model}] returned no text in response.`);
+        if (!res.body) {
+          throw new Error('Gemini returned no body');
         }
 
-        // Emit full response as single chunk for consistency
+        // Stream tokens via PipelineEventBus
         const { PipelineEventBus } = await import('./PipelineEventBus')
         const bus = PipelineEventBus.getInstance()
         const sessionId = bus.getCurrentSessionId()
-        if (sessionId) bus.emit({ type: 'llm_chunk', sessionId, chunk: text, agentName: 'gemini' })
 
-        return text;
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let accumulated = ''
+
+        while (true) {
+          if (bus.isCancelled()) {
+            reader.cancel()
+            throw new Error('Build cancelled by user')
+          }
+          const { done, value } = await reader.read()
+          if (done) break
+
+          const text = decoder.decode(value, { stream: true })
+          const lines = text.split('\n').filter(l => l.startsWith('data: '))
+
+          for (const line of lines) {
+            const data = line.slice(6).trim()
+            if (!data || data === '[DONE]') continue
+            try {
+              const parsed = JSON.parse(data)
+              // Gemini returns thinking in separate 'thought: true' parts — skip those
+              const parts = parsed?.candidates?.[0]?.content?.parts ?? []
+              for (const part of parts) {
+                if (part.thought) continue;  // Skip thinking output
+                const chunk = part.text ?? ''
+                if (chunk) {
+                  accumulated += chunk
+                  if (options.onChunk) {
+                    options.onChunk(chunk);
+                  }
+                  if (sessionId) {
+                    bus.emit({ type: 'llm_chunk', sessionId, chunk, agentName: 'gemini' })
+                  }
+                }
+              }
+            } catch (err) {
+              // Ignore JSON parse errors on incomplete chunks
+            }
+          }
+        }
+
+        return accumulated;
       }, 'gemini')
     }
 
@@ -198,6 +244,7 @@ export async function streamFromLLM(
         const body = {
           model: openaiModel,
           max_tokens: maxTokens,
+          stream: true,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: prompt },
@@ -220,34 +267,67 @@ export async function streamFromLLM(
           }
           throw new Error(`OpenAI API error (HTTP ${res.status}): ${errText}`);
         }
-
-        const data = (await res.json()) as {
-          choices?: Array<{ message?: { content?: string } }>;
-        };
-
-        const text = data.choices?.[0]?.message?.content;
-        if (!text) {
-          throw new Error("OpenAI returned no content in response.");
+        if (!res.body) {
+          throw new Error('OpenAI returned no body');
         }
 
-        // Emit full response as single chunk for consistency
         const { PipelineEventBus } = await import('./PipelineEventBus')
         const bus = PipelineEventBus.getInstance()
         const sessionId = bus.getCurrentSessionId()
-        if (sessionId) bus.emit({ type: 'llm_chunk', sessionId, chunk: text, agentName: 'openai' })
 
-        return text;
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let accumulated = ''
+
+        while (true) {
+          if (bus.isCancelled()) {
+            reader.cancel()
+            throw new Error('Build cancelled by user')
+          }
+          const { done, value } = await reader.read()
+          if (done) break
+
+          const text = decoder.decode(value, { stream: true })
+          const lines = text.split('\n').filter(l => l.startsWith('data: '))
+
+          for (const line of lines) {
+            const data = line.slice(6).trim()
+            if (!data || data === '[DONE]') continue
+            try {
+              const parsed = JSON.parse(data)
+              const chunk = parsed?.choices?.[0]?.delta?.content ?? ''
+              if (chunk) {
+                accumulated += chunk
+                if (options.onChunk) {
+                  options.onChunk(chunk);
+                }
+                if (sessionId) {
+                  bus.emit({ type: 'llm_chunk', sessionId, chunk, agentName: 'openai' })
+                }
+              }
+            } catch (err) {
+              // Ignore JSON parse errors on incomplete chunks
+            }
+          }
+        }
+
+        return accumulated;
       }, 'openai')
     }
 
     // ── Anthropic (SSE streaming) ────────────────────────────────────────────
     case "anthropic": {
       return withRateLimitRetry(async () => {
-        const anthropicModel = _anthropicModelOverride ?? 'claude-sonnet-4-6';
+        const anthropicModel = _anthropicModelOverride ?? 'claude-3-5-sonnet-20241022';
         const endpoint = 'https://api.anthropic.com/v1/messages'
-        const body = {
+
+        // Extended thinking: Anthropic supports thinking blocks on Claude 3.5+ / Claude 4
+        const thinkingEnabled = options.thinking ?? false;
+        const thinkingBudget = options.thinkingBudget ?? 4096;
+
+        const body: Record<string, unknown> = {
           model: anthropicModel,
-          max_tokens: maxTokens,
+          max_tokens: thinkingEnabled ? maxTokens + thinkingBudget : maxTokens,
           stream: true,
           system: [
             {
@@ -259,12 +339,19 @@ export async function streamFromLLM(
           messages: [{ role: 'user' as const, content: prompt }],
         }
 
+        if (thinkingEnabled) {
+          body.thinking = {
+            type: 'enabled',
+            budget_tokens: thinkingBudget,
+          };
+        }
+
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
+            'anthropic-version': thinkingEnabled ? '2025-04-15' : '2023-06-01',
           },
           body: JSON.stringify(body),
         })
@@ -291,6 +378,10 @@ export async function streamFromLLM(
         let accumulated = ''
 
         while (true) {
+          if (bus.isCancelled()) {
+            reader.cancel()
+            throw new Error('Build cancelled by user')
+          }
           const { done, value } = await reader.read()
           if (done) break
 
@@ -302,12 +393,18 @@ export async function streamFromLLM(
             if (data === '[DONE]') continue
             try {
               const parsed = JSON.parse(data)
+              // Skip thinking content blocks — only accumulate text output
+              if (parsed?.type === 'content_block_start' && parsed?.content_block?.type === 'thinking') continue;
+              if (parsed?.type === 'content_block_delta' && parsed?.delta?.type === 'thinking_delta') continue;
               const chunk: string = parsed?.delta?.text ?? ''
-              if (chunk && sessionId) {
+              if (chunk) {
                 accumulated += chunk
-                bus.emit({ type: 'llm_chunk', sessionId, chunk, agentName: 'anthropic' })
-              } else if (chunk) {
-                accumulated += chunk
+                if (options.onChunk) {
+                  options.onChunk(chunk);
+                }
+                if (sessionId) {
+                  bus.emit({ type: 'llm_chunk', sessionId, chunk, agentName: 'anthropic' })
+                }
               }
             } catch {}
           }
@@ -347,7 +444,7 @@ export async function streamStructuredJSON<T>(
   if (providerLower === 'anthropic') {
     // ── Anthropic: tool_use forces structured JSON ──────────────────────
     return withRateLimitRetry(async () => {
-      const anthropicModel = _anthropicModelOverride ?? 'claude-sonnet-4-6';
+      const anthropicModel = _anthropicModelOverride ?? 'claude-sonnet-5';
       const endpoint = 'https://api.anthropic.com/v1/messages';
 
       const body = {

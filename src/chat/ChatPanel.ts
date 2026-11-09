@@ -6,6 +6,15 @@ import { streamFromLLM } from "../engine/NetworkNode";
 import { runOrchestration } from "../engine/Orchestrator";
 import { PipelineEventBus } from '../engine/PipelineEventBus';
 
+function getNonce() {
+  let text = '';
+  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  for (let i = 0; i < 32; i++) {
+    text += possible.charAt(Math.floor(Math.random() * possible.length));
+  }
+  return text;
+}
+
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Types Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 interface ChatMessage {
@@ -402,11 +411,13 @@ export class ZOZOChatPanel {
   // Ã¢â€â‚¬Ã¢â€â‚¬ Chat UI Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
   getChatHTML(): string {
+    const nonce = getNonce();
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -612,13 +623,13 @@ export class ZOZOChatPanel {
   <div class="topbar-left">
     <span class="logo">\\u26A1 ZOZO</span>
     <div class="mode-toggle">
-      <button class="mode-btn active" id="btn-normal" onclick="setMode('normal')" title="gemini-2.5-flash · 1500 req/day free · Fast">Normal</button>
-      <button class="mode-btn" id="btn-ultra" onclick="setMode('ultra')" title="gemini-3.1-pro · Paid · ~$0.10-0.60/build">Ultra</button>
-      <button class="mode-btn" id="btn-max" onclick="setMode('max')" title="gemini-3.1-pro ALL steps · Paid · ~$0.50-3.00/build">Max \uD83D\uDD25</button>
+      <button class="mode-btn active" id="btn-normal" data-mode="normal" title="gemini-2.5-flash · 1500 req/day free · Fast">Normal</button>
+      <button class="mode-btn" id="btn-ultra" data-mode="ultra" title="gemini-3.1-pro · Paid · ~$0.10-0.60/build">Ultra</button>
+      <button class="mode-btn" id="btn-max" data-mode="max" title="gemini-3.1-pro ALL steps · Paid · ~$0.50-3.00/build">Max \uD83D\uDD25</button>
     </div>
   </div>
   <div style="display:flex;align-items:center;gap:8px;">
-    <span class="model-chip" id="model-chip" onclick="openSettings()">flash-2.5</span>
+    <span class="model-chip" id="model-chip" data-action="settings">flash-2.5</span>
     <span id="cost-hint" style="display:none;font-size:10px;color:var(--warn);"></span>
   </div>
 </div>
@@ -656,10 +667,10 @@ export class ZOZOChatPanel {
         <h2>ZOZO \\u2014 Full-Stack AI Engineer</h2>
         <p>Type what to build. ZOZO asks your preferences,<br>then generates a working app.</p>
         <div class="examples">
-          <div class="example" onclick="useExample(this)">build a dark SaaS landing page with pricing</div>
-          <div class="example" onclick="useExample(this)">build a web3 NFT marketplace with wallet connect</div>
-          <div class="example" onclick="useExample(this)">build an AI chat app with Supabase auth</div>
-          <div class="example" onclick="useExample(this)">make the hero button purple</div>
+          <div class="example">build a dark SaaS landing page with pricing</div>
+          <div class="example">build a web3 NFT marketplace with wallet connect</div>
+          <div class="example">build an AI chat app with Supabase auth</div>
+          <div class="example">make the hero button purple</div>
         </div>
         <div class="build-tags">
           <span>\\u26A1 Express: ~2 min</span>
@@ -679,7 +690,7 @@ export class ZOZOChatPanel {
         <span class="progress-step-name" id="progress-step-name">Starting...</span>
         <div class="progress-badges">
           <span class="mode-badge" id="mode-badge" style="display:none"></span>
-          <button class="cancel-btn" onclick="cancelBuild()">Cancel</button>
+          <button class="cancel-btn" id="btn-cancel">Cancel</button>
         </div>
       </div>
       <div class="bar-track"><div class="bar-fill" id="bar-fill"></div></div>
@@ -689,15 +700,13 @@ export class ZOZOChatPanel {
 
     <!-- Input -->
     <div class="input-area">
-      <textarea class="input-box" id="input" placeholder="Describe what to build..." rows="1"
-        onkeydown="handleKey(event)"
-        oninput="autoResize(this)"></textarea>
-      <button class="send-btn" id="send-btn" onclick="send()">\\u2191</button>
+      <textarea class="input-box" id="input" placeholder="Describe what to build..." rows="1"></textarea>
+      <button class="send-btn" id="send-btn">\\u2191</button>
     </div>
   </div>
 </div>
 
-<script>
+<script nonce="${nonce}">
 var vscode = acquireVsCodeApi();
 var currentMode = 'normal';
 var currentStep = 0;
@@ -737,14 +746,35 @@ function setMode(mode) {
   vscode.postMessage({ command: 'setMode', mode: mode });
 }
 
-// Input
-function handleKey(e) {
+// Event Listeners
+document.getElementById('input')?.addEventListener('keydown', function(e) {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-}
-function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-}
+});
+document.getElementById('input')?.addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+document.addEventListener('click', function(e) {
+  var el = e.target;
+  if (!el.closest) el = el.parentElement;
+  if (!el) return;
+
+  var modeBtn = el.closest('.mode-btn');
+  if (modeBtn) { setMode(modeBtn.getAttribute('data-mode')); return; }
+
+  var chip = el.closest('#model-chip');
+  if (chip && chip.getAttribute('data-action') === 'settings') { openSettings(); return; }
+
+  var example = el.closest('.example');
+  if (example) { useExample(example); return; }
+
+  var cancelBtn = el.closest('#btn-cancel');
+  if (cancelBtn) { cancelBuild(); return; }
+
+  var sendBtn = el.closest('#send-btn');
+  if (sendBtn) { send(); return; }
+});
 function send() {
   var input = document.getElementById('input');
   var text = input.value.trim();

@@ -4,6 +4,7 @@ import { ProjectPlan } from "./PlannerAgent";
 import { DesignBlueprint } from "./DesignAgent";
 import { DesignRulesEngine } from "../engine/DesignRulesEngine";
 import type { BuilderContext } from '../engine/AgentContext';
+import { PipelineEventBus } from '../engine/PipelineEventBus';
 
 
 
@@ -187,236 +188,58 @@ Every element needs EXPLICIT color classes. Never rely on inherited color.
 
 Dark text on dark background = invisible = broken app.
 
-# DESIGN QUALITY — banned patterns
+# CREATIVE STANDARD
 
-These make the app look like a generic template. Never produce these:
-- Hero with just centered headline + gradient blob + generic "Get Started" button
-- Flat layout with no depth, layering, or shadows
-- Uniform border-radius and padding on every component
-- Gray text on dark bg with no hierarchy between heading and body
-- Default Tailwind blue (#3b82f6) as brand color
-- Stock placeholder text like "Lorem ipsum" or "Your Company"
+Judged against Nike.com, Framer.com, SSENSE.com, Awwwards SOTD. Generic = failed.
 
-# DESIGN QUALITY — required patterns
+VISUAL DEPTH: Hero must use parallax image OR kinetic typography OR video bg. Add grain overlay (opacity 0.03), gradient orbs (blur-[120px] opacity-20), grid/dot bg patterns.
 
-Every build must demonstrate at least 5 of these:
-- Scale contrast: h1 at text-5xl md:text-7xl, h2 at text-3xl, body at text-base
-- Intentional spacing rhythm — NOT uniform py-8 on every section
-- Depth through layered cards, subtle shadows, backdrop-blur glass effects
-- Typography pairing — display font for headings (Space Grotesk), body font (Inter)
-- Color used semantically — accent violet for CTAs only, not sprinkled everywhere
-- Hover and focus states on EVERY interactive element (scale, glow, color shift)
-- Motion that reveals content on scroll — NOT animation for animation's sake
+MOTION: Every section whileInView stagger. Every card whileHover y:-8 scale:1.02. Every button whileTap scale:0.95. Hero headline word-by-word reveal. Stats use useMotionValue+useSpring counting.
 
-# CREATIVE STANDARD — YOUR LIFE DEPENDS ON THIS
+INTERACTIONS: Magnetic buttons on primary CTAs (useState pos, getBoundingClientRect, motion.button animate). Navbar transparent→frosted glass at 50px scroll. Horizontal snap scroll on product sections.
 
-You are the world's best Next.js engineer. This site will be judged against Nike.com, Framer.com, SSENSE.com, Awwwards SOTD winners. If it looks generic, you have failed.
-Ask yourself: "Would this get featured on Awwwards?"
+TYPOGRAPHY: Hero h1 clamp(4rem,10vw,10rem) weight:900 tracking:-0.04em. Section h2 clamp(2.5rem,5vw,5rem). Labels text-[10px] tracking-[0.4em] uppercase. Mix display+sans fonts. Gradient text on ONE key word.
 
-EVERY build must have ALL of these — no exceptions:
+SECTIONS (include ALL): Hero (full viewport, parallax, magnetic CTA, scroll indicator), Marquee/Ticker (CSS translateX(-50%) infinite), Product Grid (real images, spring hover), Stats Row (animated counting), Testimonials (luxury copy, stagger), Footer (4 columns, social icons, border-top).
 
-## LAYER 1 — VISUAL DEPTH (always)
-- Hero: NEVER just text on dark background. Always one of:
-  → Full bleed image with scroll parallax (useScroll + useTransform y:[0,500]→[0,150])
-  → Kinetic typography (word-by-word reveal, letters animate in)
-  → Video background (autoPlay muted loop playsInline)
-- Grain texture overlay on hero: fixed pseudo-element, opacity 0.03, mix-blend-mode overlay
-- Gradient orbs: 2-3 absolute positioned div with blur-[120px] opacity-20 in brand colors
-- Subtle grid/dot background pattern on sections
+PRODUCT IMAGES — NEVER dark empty boxes. Use media context URLs if provided. Fallback: picsum.photos with unique IDs per card. img: w-full h-full object-cover hover:scale-110 transition-transform duration-700.
 
-## LAYER 2 — MOTION (always)
-- EVERY section: whileInView stagger, never static
-- EVERY card: whileHover y:-8 + scale:1.02 + border brightens
-- EVERY button: whileTap scale:0.95 + whileHover scale:1.05
-- Hero headline: word-by-word reveal with overflow:hidden spans
-- Numbers/stats: useMotionValue + useSpring animated counting
-- Image hover: scale:1.1 inside overflow:hidden container (7s duration)
+COPY: Match brand tone (luxury→"Handcrafted for those who refuse to compromise", not "Platform for teams"). Stats→"500 Units Per Drop" not "99.9% Uptime".
 
-## LAYER 3 — INTERACTIONS (always)
-- Magnetic buttons on PRIMARY CTAs:
-  const [pos, setPos] = useState({x:0,y:0})
-  const handleMove = (e: React.MouseEvent<HTMLButtonElement>) => {
-    const r = e.currentTarget.getBoundingClientRect()
-    setPos({x:(e.clientX-r.left-r.width/2)*0.3,y:(e.clientY-r.top-r.height/2)*0.3})
-  }
-  <motion.button animate={pos} transition={{type:'spring',stiffness:150,damping:15}} onMouseMove={handleMove} onMouseLeave={()=>setPos({x:0,y:0})}>
-- Navbar: transparent → frosted glass at 50px scroll. Use useScroll from framer-motion
-- Horizontal scroll on product/portfolio section:
-  <div className="flex overflow-x-auto snap-x snap-mandatory gap-6 pb-6 scrollbar-none cursor-grab active:cursor-grabbing">
+# GLOBALS.CSS RULES
 
-## LAYER 4 — TYPOGRAPHY (always)
-- Hero h1: clamp(4rem,10vw,10rem) font-weight:900 letter-spacing:-0.04em
-- Section h2: clamp(2.5rem,5vw,5rem) font-weight:800
-- Labels: text-[10px] tracking-[0.4em] uppercase opacity-60
-- Mix display font (Playfair/Cormorant) with sans-serif (Inter/Space Grotesk)
-- Gradient text on ONE key word: bg-gradient-to-r bg-clip-text text-transparent
+Define CSS variables: --background:#09090b, --surface:#111118, --accent:#7c3aed, --accent-cyan:#06b6d4, --text:#e4e4e7, --muted:#71717a, --ease-out-expo:cubic-bezier(0.16,1,0.3,1).
+Include @keyframes shimmer and float at TOP LEVEL (never nested inside selectors — nested @keyframes breaks CSS parser).
+Custom scrollbar (6px, brand color thumb). Selection highlight in accent.
 
-## LAYER 5 — CREATIVE SECTIONS (always include ALL)
-- HERO: full viewport, parallax image, word reveal headline, magnetic CTA, scroll indicator
-- MARQUEE/TICKER: infinite horizontal scroll of brand keywords using CSS animation
-  @keyframes marquee { from{transform:translateX(0)} to{transform:translateX(-50%)} }
-  <div style={{animation:'marquee 20s linear infinite'}} className="flex gap-16 whitespace-nowrap">
-- PRODUCT/FEATURE GRID: real images, spring hover, horizontal scroll on mobile
-- STATS ROW: animated counting numbers, gold dividers between stats
-- TESTIMONIALS: luxury copy, avatar initials, star ratings, stagger entrance
-- COUNTDOWN: real timer with useEffect, animated digit flip
-- FOOTER: 4 columns, social icons, border-top border-white/10, large brand tagline
-
-## IF FRAMER/EDITORIAL:
-- Each page section slides in from bottom: initial y:60 → whileInView y:0
-- Page feels like browsing a luxury magazine
-- Thin (200-300 weight) secondary text alongside heavy headings
-
-## IF WEB3:
-- Neon cyan/purple glow on all borders and text highlights
-- Animated gradient mesh: CSS @keyframes shifting hue
-- Glassmorphism cards with backdrop-blur-xl
-
-## IF 3D:
-- @react-three/fiber Canvas in hero with Float + Stars from drei
-- Camera animates slowly: useFrame to rotate camera slightly
-- Add to package.json: three, @react-three/fiber, @react-three/drei
-
-## IF PREMIUM LUXURY:
-- Warm black (#0c0a09) not cold black
-- Gold (#d4af37) accent on ALL highlights, borders, labels
-- Playfair Display 200 weight for hero
-- Horizontal scroll gallery for products
-
-## PRODUCT IMAGES — ZERO TOLERANCE:
-- NEVER dark empty boxes
-- ALWAYS use image URLs from media context (## REAL MEDIA section)
-- If no media: use https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800 for sneakers
-- Each product card: different picsum ID — never same image twice
-- img tag: className="w-full h-full object-cover hover:scale-110 transition-transform duration-700"
-
-## COPY RULES — ZERO TOLERANCE:
-- Luxury/fashion/sneaker: "Handcrafted for those who refuse to compromise" NOT "Platform for teams"
-- Testimonials: "The craftsmanship rivals anything from heritage houses" NOT "Loved by Engineers"
-- Stats: "500 Units Per Drop" "72 Hours Crafted" NOT "99.9% Uptime" "10k Users"
-- Section labels: "THE COLLECTION" "LIMITED DROPS" "THE VERDICT" NOT "FEATURES" "PRICING"
-
-# GLOBALS.CSS — always define these CSS variables
-
-\`\`\`css
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-:root {
-  --background: #09090b;
-  --surface: #111118;
-  --accent: #7c3aed;
-  --accent-cyan: #06b6d4;
-  --text: #e4e4e7;
-  --muted: #71717a;
-  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-body { background: var(--background); color: var(--text); }
-
-@keyframes shimmer {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
-}
-
-@keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-20px); }
-}
-
-/* Custom scrollbar */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: #09090b; }
-::-webkit-scrollbar-thumb { background: #7c3aed; border-radius: 3px; }
-
-::selection { background: rgba(124, 58, 237, 0.3); }
-\`\`\`
-
-CRITICAL CSS RULE: Never nest @keyframes inside a CSS class or selector. Always write @keyframes at the TOP LEVEL of the CSS file. Nested @keyframes breaks the CSS parser and the build fails.
+CRITICAL: Never nest @keyframes inside a CSS class. Always write @keyframes at the TOP LEVEL.
 
 # PACKAGE.JSON — exact versions, never "latest"
 
-NEVER add eslint or eslint-config-next to package.json. These cause npm install failures on npm 10+ due to peer dependency conflicts. The build does not need eslint.
+NEVER add eslint or eslint-config-next (peer dependency conflicts). NEVER add @next/font (doesn't exist). NEVER add shadcn-ui (use @/components/ui/ paths).
+Required: "next":"^14.2.0", "react":"^18.3.0", "react-dom":"^18.3.0", "framer-motion":"^11.0.0", "lucide-react":"^0.400.0", "clsx":"^2.1.0", "tailwind-merge":"^2.3.0", "next-themes":"^0.3.0"
 
-Always include these with pinned versions:
-- "next": "^14.2.0"
-- "react": "^18.3.0"
-- "react-dom": "^18.3.0"
-- "framer-motion": "^11.0.0"
-- "lucide-react": "^0.400.0"
-- "clsx": "^2.1.0"
-- "tailwind-merge": "^2.3.0"
-- "next-themes": "^0.3.0"
+# NEXT.CONFIG — CommonJS only: module.exports = {}. ES module export default crashes the build.
 
-NEVER add @next/font — it does not exist as a package. Build will fail.
-NEVER add shadcn-ui — shadcn uses local files at @/components/ui/.
+# FONTS — import from 'next/font/google' only. NEVER '@next/font' or '@fontsource/*'.
 
-# NEXT.CONFIG — always CommonJS format
+# CARDS: border border-white/10 bg-white/5 backdrop-blur-sm rounded-2xl. Hover: whileHover y:-8. Sections: min py-24. Navbar: fixed backdrop-blur bg-black/80 on scroll.
 
-\`\`\`js
-/** @type {import('next').NextConfig} */
-const nextConfig = {}
-module.exports = nextConfig
-\`\`\`
+# OVERFLOW: Buttons max-w-fit. Text overflow-hidden text-ellipsis. Images overflow-hidden parent. Mobile max-w-full overflow-x-hidden. No absolute without overflow:hidden parent.
 
-Using ES module syntax (export default) in next.config will crash the build.
+# SELF-CHECK: 'use client' if hooks/events? Dark text on dark bg? @next/font references? All imports exist in packages?
 
-# FONTS — next/font/google only
-
-CORRECT: import { Inter, Space_Grotesk } from 'next/font/google'
-WRONG: import from '@next/font' (does not exist — build will fail)
-WRONG: import from '@fontsource/inter' (requires separate npm install)
-
-# CARDS AND SECTIONS
-
-- Every card: border border-white/10 bg-white/5 backdrop-blur-sm rounded-2xl
-- Every card hover: whileHover={{ y: -8 }} with framer-motion
-- Every section: minimum py-24 spacing
-- Navbar: fixed, backdrop-blur, becomes bg-black/80 on scroll past 50px
-- Footer: dark bg, border-t border-white/10, columns of links, social icons
-
-# OVERFLOW RULES — MANDATORY
-
-- Every button: max-w-fit or w-full — never overflow parent
-- All text: overflow-hidden text-ellipsis on single lines
-- Images: always overflow-hidden on parent container
-- Mobile: all sections max-w-full overflow-x-hidden
-- Navbar: items-center justify-between — never wrap
-- No absolute positioned elements without overflow:hidden parent
-
-# SELF-CHECK before each file
-
-Before writing each file, verify in your head:
-- Does this component use any hook or event handler? → needs 'use client' on line 1
-- Does this have dark/invisible text on dark background? → fix text colors to white/zinc-400
-- Does package.json reference @next/font? → remove it
-- Are all imports available in the packages listed? → verify each one
-
-# TAILWIND VERSION — always v3, never v4
-
-Always use tailwindcss@^3.4.0 — NOT v4.
-
-postcss.config.js must use:
-\`\`\`js
-module.exports = {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-};
-\`\`\`
-
-NEVER use @tailwindcss/postcss — that is v4 only and will break the build.
-NEVER import from 'tailwindcss/plugin' — use the require() pattern instead.
+# TAILWIND v3 ONLY — tailwindcss@^3.4.0, NOT v4.
+postcss.config.js: module.exports = { plugins: { tailwindcss: {}, autoprefixer: {} } }
+NEVER use @tailwindcss/postcss (v4 only). NEVER import from 'tailwindcss/plugin' — use require().
 `;
 
 
-const INITIAL_BATCH_SIZE = 4;          // Was 8 — 4 files max per batch prevents truncation
+const INITIAL_BATCH_SIZE = 2;          // Was 4 — 2 files per batch gives each file ~8x more token budget
 const BATCH_SIZE_LARGE = 50;
 const MAX_SINGLE_RETRIES = 3;
 const BATCH_DELAY_MS = 1000;
-const BUILDER_MAX_TOKENS = 8192;       // Was 4000 — 4000 was ~250 tokens per file after system prompt = 12 lines
+const BUILDER_MAX_TOKENS = 16384;      // Was 8192 — doubled to prevent mid-component truncation
 
 function buildDesignContext(blueprint: DesignBlueprint): string {
   return `DESIGN: Colors ${blueprint.colorPalette.primary}/${blueprint.colorPalette.accent}, ` +
@@ -425,6 +248,174 @@ function buildDesignContext(blueprint: DesignBlueprint): string {
     `Layout ${blueprint.layoutStyle}, 3D ${blueprint.threeD}(${blueprint.threeDStyle}), ` +
     `Glass ${blueprint.glassmorphism}, Dark ${blueprint.darkMode}`;
 }
+
+// ─── Adaptive Token Budget ────────────────────────────────────────────────────
+// Gives complex files more tokens than simple ones, matching real-world complexity.
+
+function getTokenBudget(filePath: string): number {
+  // Config files are tiny
+  if (/package\.json$/i.test(filePath)) return 3000;
+  if (/tsconfig\.json$/i.test(filePath)) return 1500;
+  if (/tailwind\.config/i.test(filePath)) return 2000;
+  if (/next\.config/i.test(filePath)) return 1500;
+  if (/postcss\.config/i.test(filePath)) return 1000;
+
+  // CSS files — need room for keyframes and variables
+  if (/globals\.css$/i.test(filePath)) return 4000;
+
+  // Layout is medium — defines fonts, metadata, structure
+  if (/layout\.tsx$/i.test(filePath)) return 5000;
+
+  // Utils are small
+  if (/lib\//i.test(filePath)) return 2000;
+
+  // Page files import all components — need to list them
+  if (/page\.tsx$/i.test(filePath)) return 8000;
+
+  // Components by complexity
+  if (/Hero|Header/i.test(filePath)) return 12000;   // Most complex — parallax, animations, 3D
+  if (/Navbar/i.test(filePath)) return 8000;          // Scroll detection, mobile menu
+  if (/Footer/i.test(filePath)) return 5000;          // Simple columns
+  if (/Pricing|FAQ|Accordion/i.test(filePath)) return 6000;  // Toggle state
+  if (/Testimonial/i.test(filePath)) return 6000;     // Cards + stagger
+
+  return 8000;  // Default for other components
+}
+
+// ─── Context Extraction ───────────────────────────────────────────────────────
+// Extracts a compact summary of generated code for context chaining.
+// Only keeps: exports, prop types/interfaces, and import lines.
+// This prevents the context window from exploding while ensuring
+// subsequent files reference correct prop names, exports, and paths.
+
+function extractExportsAndProps(code: string, filePath: string): string {
+  const lines = code.split('\n');
+  const summary: string[] = [`// ${filePath}`];
+
+  // For config files (JSON, CSS, JS configs), include full content since they're small
+  if (/\.(json|css)$/.test(filePath) || /config\.(js|ts|mjs)$/.test(filePath)) {
+    // Cap at 60 lines for safety
+    return code.split('\n').slice(0, 60).join('\n');
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Keep import lines (shows what this file depends on)
+    if (trimmed.startsWith('import ')) {
+      summary.push(trimmed);
+      continue;
+    }
+
+    // Keep interface/type definitions (shows prop shapes)
+    if (/^(export\s+)?(interface|type)\s+\w+/.test(trimmed)) {
+      // Capture the full interface block
+      const startIdx = lines.indexOf(line);
+      let depth = 0;
+      let endIdx = startIdx;
+      for (let j = startIdx; j < lines.length; j++) {
+        depth += (lines[j].match(/\{/g) || []).length;
+        depth -= (lines[j].match(/\}/g) || []).length;
+        endIdx = j;
+        if (depth <= 0 && j > startIdx) break;
+      }
+      summary.push(lines.slice(startIdx, endIdx + 1).join('\n'));
+      continue;
+    }
+
+    // Keep export default and named exports (shows what this file provides)
+    if (trimmed.startsWith('export default ') || trimmed.startsWith('export function ') || trimmed.startsWith('export const ')) {
+      // Just the signature, not the body
+      const sig = trimmed.replace(/\{[\s\S]*$/, '{...}');
+      summary.push(sig);
+      continue;
+    }
+
+    // Keep 'use client' directive
+    if (trimmed === "'use client'" || trimmed === '"use client"') {
+      summary.push(trimmed);
+      continue;
+    }
+  }
+
+  return summary.join('\n');
+}
+
+// ─── File Grouping for Sequential Generation ─────────────────────────────────
+// Groups files into a smart execution order where each group can see
+// the output of all previous groups.
+
+interface FileGroup {
+  files: string[];
+  label: string;
+  totalTokenBudget: number;
+  thinking: boolean;  // Enable extended thinking for complex groups
+}
+
+function buildFileGroups(filesToCreate: string[]): FileGroup[] {
+  const groups: FileGroup[] = [];
+
+  // Config files — always generated together (small, interdependent)
+  const configPatterns = [/package\.json$/, /tsconfig\.json$/, /tailwind\.config/, /next\.config/, /postcss\.config/];
+  const configFiles = filesToCreate.filter(f => configPatterns.some(p => p.test(f)));
+  if (configFiles.length > 0) {
+    const budget = configFiles.reduce((sum, f) => sum + getTokenBudget(f), 0);
+    groups.push({ files: configFiles, label: 'Config files', totalTokenBudget: budget, thinking: false });
+  }
+
+  // Foundation: globals.css + layout.tsx + lib/utils.ts
+  const foundationFiles = filesToCreate.filter(f =>
+    /globals\.css$/.test(f) || /layout\.tsx$/.test(f) || /lib\//.test(f)
+  );
+  if (foundationFiles.length > 0) {
+    const budget = foundationFiles.reduce((sum, f) => sum + getTokenBudget(f), 0);
+    groups.push({ files: foundationFiles, label: 'Foundation files', totalTokenBudget: budget, thinking: false });
+  }
+
+  // page.tsx — after components so it knows what to import
+  // But we generate it before components and then regenerate if needed
+  const pageFiles = filesToCreate.filter(f => /page\.tsx$/.test(f));
+
+  // Components — one per call, with thinking enabled for complex ones
+  const componentFiles = filesToCreate.filter(f =>
+    f.startsWith('components/') || (f.endsWith('.tsx') && !pageFiles.includes(f) && !foundationFiles.includes(f))
+  );
+
+  // Sort components: simple first (Footer, Nav), complex last (Hero)
+  const complexityOrder = (f: string): number => {
+    if (/Footer/i.test(f)) return 1;
+    if (/Testimonial/i.test(f)) return 2;
+    if (/Pricing|FAQ/i.test(f)) return 3;
+    if (/Features|Stats/i.test(f)) return 4;
+    if (/Navbar|Nav/i.test(f)) return 5;
+    if (/Hero|Header/i.test(f)) return 6;  // Last — most complex, needs most context
+    return 3;
+  };
+  componentFiles.sort((a, b) => complexityOrder(a) - complexityOrder(b));
+
+  for (const comp of componentFiles) {
+    const budget = getTokenBudget(comp);
+    const isComplex = /Hero|Header|Navbar/i.test(comp);
+    groups.push({ files: [comp], label: comp, totalTokenBudget: budget, thinking: isComplex });
+  }
+
+  // Page files last — they import all components, so they need the full context
+  if (pageFiles.length > 0) {
+    for (const page of pageFiles) {
+      groups.push({ files: [page], label: page, totalTokenBudget: getTokenBudget(page), thinking: true });
+    }
+  }
+
+  // Any remaining files
+  const allGrouped = new Set(groups.flatMap(g => g.files));
+  const remaining = filesToCreate.filter(f => !allGrouped.has(f));
+  for (const f of remaining) {
+    groups.push({ files: [f], label: f, totalTokenBudget: getTokenBudget(f), thinking: false });
+  }
+
+  return groups;
+}
+
 
 function chunkArray(arr: string[], size: number): string[][] {
   const chunks: string[][] = [];
@@ -541,8 +532,21 @@ async function buildWithRetry(
     const response = await tryBuildFiles(ctx, files, batchLabel, isFirst);
 
     if (!isEmptyResponse(response)) {
-      oc.appendLine(`[ZOZO SUCCESS] ${batchLabel} complete (${files.length} files)`);
-      return { xml: response, succeeded: files.length, skipped: [] };
+      // Truncation detection — check for incomplete files (missing export default, unclosed JSX)
+      const hasExportDefault = response.includes('export default');
+      const openTags = (response.match(/<[A-Z][a-zA-Z]*[^/\n>]*>/g) || []).length;
+      const closeTags = (response.match(/<\/[A-Z][a-zA-Z]*>/g) || []).length;
+      const selfClosing = (response.match(/<[A-Z][a-zA-Z]*[^>]*\/>/g) || []).length;
+      const hasUnclosedJSX = (openTags - selfClosing) > (closeTags + 5);
+      const hasComponentFiles = files.some(f => f.startsWith('components/') || f.endsWith('.tsx'));
+
+      if (hasComponentFiles && (!hasExportDefault || hasUnclosedJSX)) {
+        oc.appendLine(`[ZOZO TRUNCATION] ${batchLabel} detected truncated output (export default: ${hasExportDefault}, unclosed JSX: ${hasUnclosedJSX}). Retrying...`);
+        // Fall through to retry logic below
+      } else {
+        oc.appendLine(`[ZOZO SUCCESS] ${batchLabel} complete (${files.length} files)`);
+        return { xml: response, succeeded: files.length, skipped: [] };
+      }
     }
 
     // Empty response — try splitting
@@ -714,155 +718,206 @@ ${profile.inspiration?.includes('editorial') ? '→ Large typography. Thin fonts
     systemPrompt: fullSystemPrompt,
   };
 
-  // Anthropic handles everything in one shot
+  // ── ANTHROPIC — Sequential generation with context chaining ──────────────
   if (providerLower === "anthropic") {
-    const configFiles = ['package.json', 'tsconfig.json', 'tailwind.config.ts', 'next.config.js', 'postcss.config.js', 'app/globals.css', 'app/layout.tsx', 'lib/utils.ts', 'app/page.tsx']
-    const configs = plan.filesToCreate.filter(f => configFiles.some(c => f.endsWith(c)))
-    const components = plan.filesToCreate.filter(f => f.startsWith('components/'))
-    const others = plan.filesToCreate.filter(f => !configs.includes(f) && !components.includes(f))
+    const groups = buildFileGroups(plan.filesToCreate);
+    const allResponses: string[] = [];
+    const generatedCode: Map<string, string> = new Map();
 
-    const groups = [
-      { files: [...configs, ...others], label: 'Config+Pages', tokens: 4000 },
-      ...components.map(f => ({ files: [f], label: f, tokens: 8000 })),
-    ].filter(g => g.files.length > 0)
+    outputChannel.appendLine(`[ZOZO] Anthropic sequential: ${plan.filesToCreate.length} files in ${groups.length} groups`);
 
-    const allResponses: string[] = []
-    for (const group of groups) {
-      outputChannel.appendLine(`[ZOZO] Building: ${group.label}`)
-      let prompt = buildBatchPrompt(ctx, group.files, group.label, allResponses.length === 0)
+    for (let gi = 0; gi < groups.length; gi++) {
+      const group = groups[gi];
+      outputChannel.appendLine(`[ZOZO] [${gi + 1}/${groups.length}] Building: ${group.label} (${group.totalTokenBudget} tokens, thinking: ${group.thinking})`);
 
-      // Drift reset: after 2+ batches, force strict correctness over creativity
-      const driftReset = allResponses.length >= 2 ?
-        `RESET: Generate this component fresh. Follow STRICT correctness over design. Do NOT prioritize animations over valid code. Complete file only. No truncation.\n\n` : ''
-      prompt = driftReset + prompt
-
-      // Inject active profile as explicit instructions
-      const profileInstructions = ctx.systemPrompt.includes('framer') ? `
-🎯 ACTIVE CREATIVE MODE: FRAMER-STYLE
-- Word-by-word text reveal on hero headline — MANDATORY
-- Magnetic buttons on all CTAs — MANDATORY  
-- Smooth Lenis scroll — MANDATORY
-- Large editorial whitespace py-48 — MANDATORY
-` : ctx.systemPrompt.includes('web3') ? `
-🎯 ACTIVE CREATIVE MODE: WEB3 NEON
-- Animated gradient mesh background — MANDATORY
-- Neon glow borders cyan — MANDATORY
-- Counter animations with useSpring — MANDATORY
-` : ctx.systemPrompt.includes('3d') ? `
-🎯 ACTIVE CREATIVE MODE: THREE.JS 3D — MANDATORY
-
-1. package.json MUST include these exact versions:
-"three": "^0.160.0",
-"@react-three/fiber": "^8.15.0",
-"@react-three/drei": "^9.92.0"
-NEVER overwrite existing dependencies — merge them.
-
-2. next.config.js MUST have:
-module.exports = { transpilePackages: ['three'] }
-
-3. Hero.tsx MUST be 'use client' and include real Canvas:
-import { Canvas } from '@react-three/fiber'
-import { Float, Stars } from '@react-three/drei'
-
-<section className="relative min-h-screen overflow-hidden">
-  <Canvas 
-    camera={{ position: [0, 0, 5], fov: 75 }} 
-    className="absolute inset-0 w-full h-full"
-  >
-    <ambientLight intensity={0.5} />
-    <directionalLight position={[2, 2, 2]} intensity={1} />
-    <Stars radius={100} depth={50} count={2000} factor={4} />
-    <Float speed={2} rotationIntensity={0.5} floatIntensity={0.5}>
-      <mesh>
-        <icosahedronGeometry args={[1.5, 1]} />
-        <meshStandardMaterial color="#7c3aed" wireframe />
-      </mesh>
-    </Float>
-  </Canvas>
-  <div className="relative z-10 flex flex-col items-center justify-center min-h-screen">
-    {/* headline and CTAs here */}
-  </div>
-</section>
-
-4. page.tsx must wrap Hero in Suspense:
-import { Suspense } from 'react'
-<Suspense fallback={<div className="min-h-screen bg-black" />}>
-  <Hero />
-</Suspense>
-
-NEVER use CSS floating shapes when 3D is selected.
-Stars count MUST be 2000 not 5000 — performance.
-` : `
-🎯 ACTIVE CREATIVE MODE: PREMIUM LUXURY
-- Full bleed parallax hero image — MANDATORY
-- Horizontal scroll product gallery — MANDATORY
-- Gold accents throughout — MANDATORY
-`
-
-      prompt = profileInstructions + '\n\n' + prompt
-
-      const response = await streamFromLLM(prompt, provider, apiKey, fullSystemPrompt, {
-        maxOutputTokens: group.tokens,
-      })
-      if (response && response.includes('<zozo_action')) {
-        // Quick validate before accepting — excludes self-closing tags like <Stars />, <Canvas />
-        const openTags = (response.match(/<[A-Z][a-zA-Z]*[^/\n>]*>/g) || []).length
-        const closeTags = (response.match(/<\/[A-Z][a-zA-Z]*>/g) || []).length
-        const selfClosing = (response.match(/<[A-Z][a-zA-Z]*[^>]*\/>/g) || []).length
-        const hasUnclosedJSX = (openTags - selfClosing) > (closeTags + 5)  // was +20, now +5
-        const isTruncated = !response.includes('export default') &&
-          group.label.startsWith('components/')
-
-        if (hasUnclosedJSX || isTruncated) {
-          outputChannel.appendLine(`[ZOZO] ⚠️ ${group.label} failed validation — retrying...`)
-          const retry = await streamFromLLM(prompt, provider, apiKey, fullSystemPrompt, {
-            maxOutputTokens: group.tokens,
-          })
-          if (retry && retry.includes('<zozo_action')) {
-            allResponses.push(retry)
-            outputChannel.appendLine(`[ZOZO] ✅ ${group.label} complete (retry)`)
-          }
-        } else {
-          allResponses.push(response)
-          outputChannel.appendLine(`[ZOZO] ✅ ${group.label} complete`)
+      // Build context from previously generated files
+      let contextSection = '';
+      if (generatedCode.size > 0) {
+        contextSection = '\n## PREVIOUSLY GENERATED FILES — use these exact exports and props\n\n';
+        for (const [filePath, code] of generatedCode) {
+          const summary = extractExportsAndProps(code, filePath);
+          contextSection += `### ${filePath}\n\`\`\`\n${summary}\n\`\`\`\n\n`;
         }
       }
-      await delay(500)
+
+      let prompt = contextSection + buildBatchPrompt(ctx, group.files, group.label, gi === 0);
+      if (gi >= 2) {
+        prompt = `RESET: Generate this component fresh. STRICT correctness over design. Complete file only. No truncation.\n\n` + prompt;
+      }
+
+      // Emit file_generating to sidebar before starting
+      const _bus = PipelineEventBus.getInstance();
+      const _sid = _bus.getCurrentSessionId();
+      _bus.emit({ type: 'file_generating', sessionId: _sid, filePath: group.label, agentName: 'builder' });
+
+      const response = await streamFromLLM(prompt, provider, apiKey, fullSystemPrompt, {
+        maxOutputTokens: group.totalTokenBudget,
+        thinking: group.thinking,
+        thinkingBudget: group.thinking ? 8192 : undefined,
+        onChunk: (chunk) => _bus.emit({ type: 'build_chunk', sessionId: _sid, chunk, filePath: group.label }),
+      });
+
+      if (response && response.includes('<zozo_action')) {
+        // Truncation check
+        const openTags = (response.match(/<[A-Z][a-zA-Z]*[^/\n>]*>/g) || []).length;
+        const closeTags = (response.match(/<\/[A-Z][a-zA-Z]*>/g) || []).length;
+        const selfClosing = (response.match(/<[A-Z][a-zA-Z]*[^>]*\/>/g) || []).length;
+        const hasUnclosedJSX = (openTags - selfClosing) > (closeTags + 5);
+        const isTruncated = !response.includes('export default') && group.label.startsWith('components/');
+
+        if (hasUnclosedJSX || isTruncated) {
+          outputChannel.appendLine(`[ZOZO] ⚠️ ${group.label} truncated — retrying with thinking...`);
+          const retry = await streamFromLLM(prompt, provider, apiKey, fullSystemPrompt, {
+            maxOutputTokens: group.totalTokenBudget,
+            thinking: true,
+            thinkingBudget: 8192,
+          });
+          if (retry && retry.includes('<zozo_action')) {
+            allResponses.push(retry);
+            for (const f of group.files) {
+              const escaped = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const fileMatch = retry.match(new RegExp(`<zozo_action[^>]*path="${escaped}"[^>]*>([\\s\\S]*?)</zozo_action>`));
+              if (fileMatch) generatedCode.set(f, fileMatch[1]);
+            }
+            _bus.emit({ type: 'file_complete', sessionId: _sid, filePath: group.label, lineCount: retry.split('\n').length });
+            outputChannel.appendLine(`[ZOZO] ✅ ${group.label} complete (retry)`);
+          }
+        } else {
+          allResponses.push(response);
+          for (const f of group.files) {
+            const escaped = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const fileMatch = response.match(new RegExp(`<zozo_action[^>]*path="${escaped}"[^>]*>([\\s\\S]*?)</zozo_action>`));
+            if (fileMatch) generatedCode.set(f, fileMatch[1]);
+          }
+          _bus.emit({ type: 'file_complete', sessionId: _sid, filePath: group.label, lineCount: response.split('\n').length });
+          outputChannel.appendLine(`[ZOZO] ✅ ${group.label} complete`);
+        }
+      } else {
+        outputChannel.appendLine(`[ZOZO] ⚠️ ${group.label} returned empty — writing placeholder`);
+        for (const f of group.files) allResponses.push(buildPlaceholder(f));
+      }
+      await delay(500);
     }
 
-    vscode.window.showInformationMessage('ZOZO: All files built!')
-    return allResponses.join('\n')
+    outputChannel.appendLine(`[ZOZO] Anthropic sequential complete: ${generatedCode.size}/${plan.filesToCreate.length} files with context chaining`);
+    vscode.window.showInformationMessage('ZOZO: All files built!');
+    return allResponses.join('\n');
   }
 
-  // Gemini / OpenAI — use smart retry with adaptive batch splitting
-  const batches = chunkArray(plan.filesToCreate, INITIAL_BATCH_SIZE);
-  ctx.totalBatches = batches.length;
-
-  outputChannel.appendLine(`[ZOZO] Builder starting: ${plan.filesToCreate.length} files in ${batches.length} batches (size ${INITIAL_BATCH_SIZE})`);
-
+  // ── GEMINI / OPENAI — Sequential generation with context chaining ───────
+  const groups = buildFileGroups(plan.filesToCreate);
   const allResponses: string[] = [];
+  const generatedCode: Map<string, string> = new Map();
   let totalSucceeded = 0;
   const totalSkipped: string[] = [];
 
-  for (let i = 0; i < batches.length; i++) {
-    const label = `Batch ${i + 1}/${batches.length}`;
-    outputChannel.appendLine(`\n[ZOZO] ${label}: ${batches[i].length} files`);
+  outputChannel.appendLine(`[ZOZO] ${providerLower} sequential: ${plan.filesToCreate.length} files in ${groups.length} groups`);
 
-    const result = await buildWithRetry(ctx, batches[i], label, i === 0, 0);
+  for (let gi = 0; gi < groups.length; gi++) {
+    const group = groups[gi];
+    outputChannel.appendLine(`\n[ZOZO] [${gi + 1}/${groups.length}] Building: ${group.label} (${group.totalTokenBudget} tokens, thinking: ${group.thinking})`);
 
-    allResponses.push(result.xml);
-    totalSucceeded += result.succeeded;
-    totalSkipped.push(...result.skipped);
+    // Build context from previously generated files
+    let contextSection = '';
+    if (generatedCode.size > 0) {
+      contextSection = '\n## PREVIOUSLY GENERATED FILES — use these exact exports and props\n\n';
+      for (const [filePath, code] of generatedCode) {
+        const summary = extractExportsAndProps(code, filePath);
+        contextSection += `### ${filePath}\n\`\`\`\n${summary}\n\`\`\`\n\n`;
+      }
+    }
 
-    // Delay between batches to avoid rate limiting
-    if (i < batches.length - 1) {
-      outputChannel.appendLine(`[ZOZO] Waiting ${BATCH_DELAY_MS}ms before next batch...`);
+    let prompt = contextSection + buildBatchPrompt(ctx, group.files, group.label, gi === 0);
+    if (gi >= 2) {
+      prompt = `RESET: Generate this component fresh. STRICT correctness over design. Complete file only. No truncation.\n\n` + prompt;
+    }
+
+    // Emit file_generating before each group starts
+    const bus2 = PipelineEventBus.getInstance();
+    const sid2 = bus2.getCurrentSessionId();
+    bus2.emit({ type: 'file_generating', sessionId: sid2, filePath: group.label, agentName: 'builder' });
+
+    try {
+      const response = await streamFromLLM(prompt, ctx.provider, ctx.apiKey, fullSystemPrompt, {
+        maxOutputTokens: group.totalTokenBudget,
+        thinking: group.thinking,
+        thinkingBudget: group.thinking ? 4096 : undefined,
+        onChunk: (chunk) => bus2.emit({ type: 'build_chunk', sessionId: sid2, chunk, filePath: group.label }),
+      });
+
+      if (!isEmptyResponse(response)) {
+        // Truncation detection
+        const hasExportDefault = response.includes('export default');
+        const openTags = (response.match(/<[A-Z][a-zA-Z]*[^/\n>]*>/g) || []).length;
+        const closeTags = (response.match(/<\/[A-Z][a-zA-Z]*>/g) || []).length;
+        const selfClosing = (response.match(/<[A-Z][a-zA-Z]*[^>]*\/>/g) || []).length;
+        const hasUnclosedJSX = (openTags - selfClosing) > (closeTags + 5);
+        const hasComponentFiles = group.files.some(f => f.startsWith('components/') || f.endsWith('.tsx'));
+
+        if (hasComponentFiles && (!hasExportDefault || hasUnclosedJSX)) {
+          outputChannel.appendLine(`[ZOZO TRUNCATION] ${group.label} truncated — retrying with thinking...`);
+
+          const retry = await streamFromLLM(prompt, ctx.provider, ctx.apiKey, fullSystemPrompt, {
+            maxOutputTokens: group.totalTokenBudget,
+            thinking: true,
+            thinkingBudget: 4096,
+          });
+
+          if (!isEmptyResponse(retry)) {
+            allResponses.push(retry);
+            totalSucceeded += group.files.length;
+            // Extract code for context chaining
+            for (const f of group.files) {
+              const escaped = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const fileMatch = retry.match(new RegExp(`<zozo_action[^>]*path="${escaped}"[^>]*>([\\s\\S]*?)</zozo_action>`));
+              if (fileMatch) generatedCode.set(f, fileMatch[1]);
+            }
+            bus2.emit({ type: 'file_complete', sessionId: sid2, filePath: group.label, lineCount: retry.split('\n').length });
+          outputChannel.appendLine(`[ZOZO SUCCESS] ${group.label} complete (retry with thinking)`);
+          } else {
+            // Retry failed too — use placeholder
+            for (const f of group.files) {
+              allResponses.push(buildPlaceholder(f));
+              totalSkipped.push(f);
+            }
+          }
+        } else {
+          allResponses.push(response);
+          totalSucceeded += group.files.length;
+          // Extract code for context chaining
+          for (const f of group.files) {
+            const escaped = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const fileMatch = response.match(new RegExp(`<zozo_action[^>]*path="${escaped}"[^>]*>([\\s\\S]*?)</zozo_action>`));
+            if (fileMatch) generatedCode.set(f, fileMatch[1]);
+          }
+          bus2.emit({ type: 'file_complete', sessionId: sid2, filePath: group.label, lineCount: response.split('\n').length });
+          outputChannel.appendLine(`[ZOZO SUCCESS] ${group.label} complete`);
+        }
+      } else {
+        // Empty response — placeholder
+        outputChannel.appendLine(`[ZOZO SKIP] ${group.label} returned empty`);
+        for (const f of group.files) {
+          allResponses.push(buildPlaceholder(f));
+          totalSkipped.push(f);
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      outputChannel.appendLine(`[ZOZO ERROR] ${group.label}: ${msg}`);
+      for (const f of group.files) {
+        allResponses.push(buildPlaceholder(f));
+        totalSkipped.push(f);
+      }
+    }
+
+    // Delay between groups to avoid rate limiting
+    if (gi < groups.length - 1) {
       await delay(BATCH_DELAY_MS);
     }
   }
 
   // Final report
-  outputChannel.appendLine(`\n[ZOZO] Builder complete: ${totalSucceeded} succeeded, ${totalSkipped.length} skipped`);
+  outputChannel.appendLine(`\n[ZOZO] ${providerLower} sequential complete: ${totalSucceeded} succeeded, ${totalSkipped.length} skipped, ${generatedCode.size} files with context chaining`);
 
   if (totalSkipped.length > 0) {
     outputChannel.appendLine("[ZOZO] Skipped files:");
@@ -870,7 +925,7 @@ Stars count MUST be 2000 not 5000 — performance.
       outputChannel.appendLine(`  ❌ ${f}`);
     }
     vscode.window.showWarningMessage(
-      `ZOZO: Built ${totalSucceeded} files. ${totalSkipped.length} files need regeneration. Run ZOZO again targeting missing files.`
+      `ZOZO: Built ${totalSucceeded} files. ${totalSkipped.length} files need regeneration.`
     );
   } else {
     vscode.window.showInformationMessage("ZOZO: All files built successfully!");
@@ -878,3 +933,5 @@ Stars count MUST be 2000 not 5000 — performance.
 
   return allResponses.join("\n");
 }
+
+

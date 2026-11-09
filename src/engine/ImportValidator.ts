@@ -117,6 +117,84 @@ export class ImportValidator {
       }
     )
 
+    // Fix 9: Common lucide-react icon name mismatches
+    const lucideFixes: [RegExp, string][] = [
+      [/\bGitHub\b(?=\s*[,}\s])/g, 'Github'],          // GitHub → Github (lowercase h)
+      [/\bLinkedIn\b(?=\s*[,}\s])/g, 'Linkedin'],       // LinkedIn → Linkedin
+      [/\bYouTube\b(?=\s*[,}\s])/g, 'Youtube'],          // YouTube → Youtube
+    ]
+    // Only apply inside import lines from lucide-react
+    result = result.replace(
+      /^(import\s*\{[^}]*)\b(GitHub|LinkedIn|YouTube)\b([^}]*\}\s*from\s*['"]lucide-react['"])/gm,
+      (match) => {
+        let fixed = match
+        for (const [pattern, replacement] of lucideFixes) {
+          const before = fixed
+          fixed = fixed.replace(pattern, replacement)
+          if (fixed !== before) fixedCount++
+        }
+        return fixed
+      }
+    )
+
+    return { xml: result, violations, fixedCount }
+  }
+
+  /**
+   * Validate that every `@/components/...` import references a file that was
+   * actually planned for generation. Missing files get a stub so the build
+   * doesn't crash with "does not contain a default export".
+   */
+  validateAgainstPlannedFiles(xml: string, plannedFiles: string[]): ValidationResult {
+    const violations: ImportViolation[] = []
+    let result = xml
+    let fixedCount = 0
+
+    // Normalize planned paths: strip leading ./ or /
+    const normalizedPlanned = new Set(
+      plannedFiles.map(f => f.replace(/^\.?\//, ''))
+    )
+
+    // Find all @/components/... imports in the XML
+    const importPattern = /from\s+['"]@\/components\/([^'"]+)['"]/g
+    const referencedComponents = new Set<string>()
+
+    let match: RegExpExecArray | null
+    while ((match = importPattern.exec(xml)) !== null) {
+      const componentPath = match[1]
+      // Reconstruct possible file paths
+      const candidates = [
+        `components/${componentPath}.tsx`,
+        `components/${componentPath}.ts`,
+        `components/${componentPath}/index.tsx`,
+        `components/${componentPath}/index.ts`,
+      ]
+
+      const exists = candidates.some(c => normalizedPlanned.has(c))
+      if (!exists) {
+        referencedComponents.add(componentPath)
+        violations.push({
+          file: 'unknown',
+          importPath: `@/components/${componentPath}`,
+          violationType: 'forbidden_package',
+          correction: `Missing file: components/${componentPath}.tsx not in planned files`,
+        })
+      }
+    }
+
+    // For each missing component, inject a stub zozo_action to prevent build crash
+    for (const comp of referencedComponents) {
+      const stubPath = `components/${comp}.tsx`
+      // Only inject if no zozo_action already exists for this path
+      if (!xml.includes(`path="${stubPath}"`) && !xml.includes(`path="./${stubPath}"`)) {
+        const componentName = comp.split('/').pop()?.replace(/[^a-zA-Z]/g, '') || 'Missing'
+        const pascalName = componentName.charAt(0).toUpperCase() + componentName.slice(1)
+        const stub = `\n<zozo_action type="write" path="${stubPath}">\n"use client";\n\nexport default function ${pascalName}() {\n  return (\n    <div className="p-8 text-center text-zinc-400">\n      <p>${pascalName} — regenerate this component with ZOZO</p>\n    </div>\n  );\n}\n</zozo_action>`
+        result += stub
+        fixedCount++
+      }
+    }
+
     return { xml: result, violations, fixedCount }
   }
 }

@@ -4,11 +4,17 @@ import * as fs from "fs";
 import { ZozoVault } from "./security/Vault";
 import { executeZozoStream } from "./engine/AntigravityWriter";
 import { runOrchestration } from "./engine/Orchestrator";
-import { ZOZOChatPanel } from "./chat/ChatPanel";
-import { WorkspaceGuard } from "./engine/WorkspaceGuard";
+import { WorkspaceGuard } from './engine/WorkspaceGuard';
+import { setModelOverrides, GEMINI_MODELS } from './engine/NetworkNode';
 import { PipelineEventBus } from './engine/PipelineEventBus';
 import { BuildProfileCapture } from './engine/BuildProfile';
 import { ChatSidebarProvider } from './chat/ChatSidebarProvider';
+import { ChatAgent } from './engine/ChatAgent';
+import { ArchitectAgent } from './engine/ArchitectAgent';
+import { EditorMode } from './engine/EditorMode';
+import { IntentResolver } from './engine/IntentResolver';
+import { ClarificationGate } from './engine/ClarificationGate';
+import { ResourceAgent } from './engine/ResourceAgent';
 
 const PROVIDERS = ["Gemini", "OpenAI", "Anthropic"] as const;
 
@@ -83,82 +89,323 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   );
 
-  // ── Prompt AI — Full Orchestration ────────────────────────────────────────
+  // ── Prompt AI — Intent-routed: chat / edit / build ──────────────────────────
   const promptAICmd = vscode.commands.registerCommand(
     "zozo.promptAI",
-    async (cmdArgs?: { prompt?: string; resumeSessionId?: string; resumeFromStep?: number }) => {
-      // 1. User prompt (use cmdArgs if passed from resumeBuild, otherwise ask user)
+    async (cmdArgs?: { prompt?: string; resumeSessionId?: string; resumeFromStep?: number; mode?: string; modelId?: string; provider?: string; forceMode?: 'chat' | 'edit' | 'build' }) => {
+      try {
       const userPrompt = cmdArgs?.prompt ?? await vscode.window.showInputBox({
         prompt: "What do you want to build? Be specific.",
-        placeHolder: "e.g. A SaaS dashboard with auth, Stripe payments, and an analytics page",
+        placeHolder: "e.g. A SaaS dashboard with auth, Stripe payments",
         ignoreFocusOut: true,
       });
       if (!userPrompt?.trim()) {
-        vscode.window.showWarningMessage("⚠️ ZOZO: No prompt provided. Operation cancelled.");
+        vscode.window.showWarningMessage("⚠️ ZOZO: No prompt provided.");
         return;
       }
 
-      // Prevent concurrent pipeline runs
+      const prompt = userPrompt.trim();
+
+      // ── Determine provider & API key ───────────────────────────────────────
+      // If passed from sidebar (has modelId/provider), use those. Otherwise derive from vault.
+      const sidebarProvider = cmdArgs?.provider;
+      const provider = sidebarProvider ?? 'Gemini';
+      const apiKey = await vault.getKey(provider);
+
+      // Map UI model IDs to actual backend model IDs
+      const uiModelId = cmdArgs?.modelId;
+      let activeGeminiModel: string | null = null;
+      let activeAnthropicModel: string | null = null;
+      let activeOpenaiModel: string | null = null;
+
+      if (uiModelId) {
+        // ── Gemini ──────────────────────────────────────────────────────────
+        if (uiModelId === 'gemini-3.5-flash-medium') {
+          activeGeminiModel = GEMINI_MODELS.FLASH_FREE;            // gemini-2.5-flash
+        } else if (uiModelId === 'gemini-3.5-flash-high') {
+          activeGeminiModel = GEMINI_MODELS.PRO_FREE;              // gemini-2.5-pro
+        } else if (uiModelId === 'gemini-3.5-flash-low') {
+          activeGeminiModel = GEMINI_MODELS.FLASH_LITE_FREE;       // gemini-2.5-flash-lite
+        } else if (uiModelId === 'gemini-3.1-pro-low') {
+          activeGeminiModel = GEMINI_MODELS.PRO_ULTRA;             // gemini-3.1-pro-preview
+        } else if (uiModelId === 'gemini-3.1-pro-high') {
+          activeGeminiModel = GEMINI_MODELS.PRO_CUSTOMTOOLS_ULTRA; // gemini-3.1-pro-preview-customtools
+        // ── Anthropic ───────────────────────────────────────────────────────
+        } else if (uiModelId === 'claude-sonnet-4.6') {
+          activeAnthropicModel = 'claude-3-5-sonnet-20241022';
+        } else if (uiModelId === 'claude-opus-4.6') {
+          activeAnthropicModel = 'claude-3-opus-20240229';
+        // ── OpenAI GPT-6 ────────────────────────────────────────────────────
+        } else if (uiModelId === 'gpt-6-astra') {
+          activeOpenaiModel = 'gpt-4o';                            // fastest
+        } else if (uiModelId === 'gpt-6.1-sol') {
+          activeOpenaiModel = 'gpt-4o-mini';                       // balanced
+        } else if (uiModelId === 'gpt-6-luna') {
+          activeOpenaiModel = 'o1-preview';                        // quality / deep reasoning
+        } else {
+          activeGeminiModel = GEMINI_MODELS.FLASH_FREE;            // safe fallback
+        }
+      }
+
+      setModelOverrides(activeGeminiModel, activeAnthropicModel, activeOpenaiModel);
+
+      // ── Gate: paid Gemini model without a paid key ──────────────────────────
+      // Gemini 3.1 Pro requires billing enabled on Google AI Studio.
+      // Show a clear upgrade message instead of a cryptic API error.
+      const isPaidGeminiModel = uiModelId?.startsWith('gemini-3.1-pro');
+      if (isPaidGeminiModel && provider.toLowerCase() === 'gemini') {
+        PipelineEventBus.getInstance().emit({
+          type: 'chat_system_message',
+          sessionId: 'system',
+          text: `💎 **Gemini 3.1 Pro is a paid model.**\n\nIt requires billing enabled on your Google AI Studio account.\n\n**To upgrade:**\n1. Go to [aistudio.google.com](https://aistudio.google.com)\n2. Enable billing on your Google Cloud project\n3. Generate a new API key after billing is enabled\n\n*To use the free tier, switch to **Gemini 3.5 Flash** in the model selector below.*`,
+          isError: false,
+        });
+        PipelineEventBus.getInstance().emit({ type: 'chat_end', sessionId: 'system' });
+        return;
+      }
+
+      if (!apiKey) {
+        PipelineEventBus.getInstance().emit({
+          type: 'chat_system_message',
+          sessionId: 'system',
+          text: `⚠️ No **${provider}** API key saved.\n\nClick the **⚙ settings icon** below to add your ${provider} API key.`,
+          isError: true,
+        });
+        PipelineEventBus.getInstance().emit({ type: 'chat_end', sessionId: 'system' });
+        return;
+      }
+
+
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      const workspaceRoot = workspaceFolders?.[0]?.uri.fsPath;
+
+      // ── CREATOR MODE: Architect Agent (conversational blueprint) ─────────────
+      const uiMode = cmdArgs?.mode ?? 'chat'  // 'chat' | 'editor' | 'creator'
+      if (uiMode === 'creator') {
+        const architect = new ArchitectAgent()
+        const result = await architect.handleMessage(prompt, provider, apiKey, workspaceRoot ?? '')
+        if (result.approved && result.plan) {
+          // User approved blueprint — fall through to build pipeline with the plan as context
+          const planSummary = `Build this app based on the following Architecture Blueprint:\n\n${result.plan.rawBlueprint}\n\nOriginal user prompt: ${prompt}`
+          // Kick off the build pipeline with enriched prompt
+          vscode.commands.executeCommand('zozo.promptAI', {
+            prompt: planSummary,
+            provider,
+            modelId: cmdArgs?.modelId,
+            forceMode: 'build',
+          })
+        }
+        return
+      }
+
+      // ── EDITOR MODE: Surgical code editing with workspace context ─────────────
+      if (uiMode === 'editor') {
+        if (!workspaceRoot) {
+          PipelineEventBus.getInstance().emit({
+            type: 'chat_system_message',
+            sessionId: 'system',
+            text: '⚠️ **Editor mode** requires an open workspace folder. Please open a project folder first.',
+            isError: true,
+          })
+          return
+        }
+        const editorMode = new EditorMode()
+        await editorMode.handleMessage(prompt, provider, apiKey, workspaceRoot)
+        return
+      }
+
+      // ── Intent classification — IntentResolver (Phase 2) ───────────────────
+      const chatAgent = new ChatAgent();
+      const resolver = new IntentResolver();
+      const forceMode = cmdArgs?.forceMode;
+      let intent: 'chat' | 'edit' | 'build';
+
+      if (forceMode) {
+        intent = forceMode;
+      } else {
+        // Collect conversation history & project files for reference resolution
+        const history: Array<{role:'user'|'assistant';content:string}> = (global as any).__zozo_history ?? []
+        const decisions: any[] = (global as any).__zozo_decisions ?? []
+        const pending: any = (global as any).__zozo_pending_question ?? null
+        const projectFiles: string[] = []
+        if (workspaceRoot) {
+          try {
+            const scan = (dir: string, depth = 0): void => {
+              if (depth > 2) return
+              for (const f of fs.readdirSync(dir)) {
+                const full = path.join(dir, f)
+                if (f.startsWith('.') || f === 'node_modules') continue
+                if (fs.statSync(full).isFile()) projectFiles.push(full.replace(workspaceRoot + path.sep, ''))
+                else scan(full, depth + 1)
+              }
+            }
+            scan(workspaceRoot)
+          } catch { /* ignore */ }
+        }
+
+        // Check if user is confirming a pending build plan
+        const lastAssistantMsg = history.filter(h => h.role === 'assistant').pop()?.content ?? ''
+        const isConfirmingPlan = (
+          lastAssistantMsg.includes('Ready to build?') ||
+          lastAssistantMsg.includes("What We'll Build")
+        ) && /^(yes|yep|yeah|sure|ok|okay|go|start|build it|proceed|let's go|do it|confirm)[\s!.]*$/i.test(prompt.trim())
+
+        if (isConfirmingPlan) {
+          intent = 'build'
+          cmdArgs = { ...cmdArgs, forceMode: 'build' }
+        } else {
+          const resolved = await resolver.resolve(
+            prompt, history, projectFiles, decisions, pending, provider, apiKey
+          )
+
+          // Clear pending question if this message resolved it
+          if (resolved.resolvesPendingQuestion) {
+            ;(global as any).__zozo_pending_question = null
+          }
+
+        // ── ClarificationGate: 4-factor decision engine ──────────────────────
+        // Runs AFTER IntentResolver — classifies WHAT to do, gate decides WHETHER to ask
+        if (resolved.operation !== 'CHAT' && resolved.operation !== 'EXPLAIN' && !forceMode) {
+          const gate = new ClarificationGate()
+          const gateResult = await gate.evaluate(prompt, history, projectFiles, provider, apiKey)
+
+          if (gateResult.decision === 'ASK' && gateResult.question) {
+            // Store pending question — wait for user answer before proceeding
+            ;(global as any).__zozo_pending_question = {
+              id: 'q-' + Date.now(),
+              question: gateResult.question,
+              expectedAnswerKey: resolved.operation.toLowerCase(),
+              createdAt: Date.now(),
+            }
+            await chatAgent.chat(
+              `❓ ${gateResult.question}`,
+              provider, apiKey
+            )
+            return
+          }
+
+          if (gateResult.decision === 'CONFIRM') {
+            // Show a hard confirmation (for destructive/external actions)
+            const confirmed = await vscode.window.showWarningMessage(
+              gateResult.confirmationPrompt,
+              { modal: true }, 'Confirm'
+            )
+            if (confirmed !== 'Confirm') return
+          }
+
+          if (gateResult.decision === 'INVESTIGATE') {
+            // Log the hint — no blocking
+            PipelineEventBus.getInstance().emit({
+              type: 'chat_system_message',
+              sessionId: 'gate',
+              text: `🔍 ${gateResult.investigateHint}`,
+            })
+          }
+
+          if (gateResult.decision === 'PROCEED' && gateResult.proceedAssumption) {
+            PipelineEventBus.getInstance().emit({
+              type: 'chat_system_message',
+              sessionId: 'gate',
+              text: `💡 ${gateResult.proceedAssumption}`,
+            })
+          }
+        }
+
+        // Legacy: still honour needsClarification from IntentResolver if gate didn't fire
+        if (resolved.needsClarification && resolved.clarificationQuestion && !forceMode) {
+          ;(global as any).__zozo_pending_question = {
+            id: 'q-' + Date.now(),
+            question: resolved.clarificationQuestion,
+            expectedAnswerKey: resolved.operation.toLowerCase(),
+            createdAt: Date.now(),
+          }
+          await chatAgent.chat(resolved.clarificationQuestion, provider, apiKey)
+          return
+        }
+
+        // Show intent chip for non-trivial operations (not chat/explain)
+        if (resolved.operation !== 'CHAT' && resolved.operation !== 'EXPLAIN') {
+          PipelineEventBus.getInstance().emit({
+            type: 'chat_system_message',
+            sessionId: 'intent',
+            text: resolver.toSummaryText(resolved),
+          })
+        }
+
+        intent = resolver.toLegacyMode(resolved)
+        }
+      }
+
+      // ── CHAT: just talk ─────────────────────────────────────────────────────
+      if (intent === 'chat') {
+        await chatAgent.chat(prompt, provider, apiKey);
+        return;
+      }
+
+      // ── EDIT: pinpoint and modify existing code ──────────────────────────────
+      if (intent === 'edit') {
+        if (!workspaceRoot) {
+          await chatAgent.chat(prompt, provider, apiKey);
+          return;
+        }
+        const { EditAgent } = await import('./engine/EditAgent');
+        const editAgent = new EditAgent();
+        const editPlan = await editAgent.plan(prompt, workspaceRoot, provider, apiKey);
+
+        // Show what we're about to do in the chat
+        PipelineEventBus.getInstance().emit({
+          type: 'chat_system_message',
+          sessionId: 'edit',
+          text: `🎯 Edit mode: ${editPlan.description}\nTarget files: ${editPlan.targetFiles.join(', ') || 'scanning...'}`,
+        });
+
+        if (!editPlan.isFullRebuild && editPlan.confidence >= 60) {
+          const editResult = await editAgent.execute(editPlan, prompt, workspaceRoot, provider, apiKey);
+          if (editResult.success) {
+            PipelineEventBus.getInstance().emit({
+              type: 'chat_system_message',
+              sessionId: 'edit',
+              text: `✅ Done! Modified: ${editResult.filesModified.map(f => f.split('/').pop()).join(', ')}`,
+            });
+            return;
+          }
+          PipelineEventBus.getInstance().emit({
+            type: 'chat_system_message',
+            sessionId: 'edit',
+            text: `⚠️ Edit agent couldn't apply the change surgically. Running full build instead...`,
+          });
+        }
+        // Fall through to build
+      }
+
+      // ── BUILD: show plan first, then orchestrate ─────────────────────────────
+      // For fresh build requests (not from a 'yes' confirmation after a plan),
+      // show the plan and wait for user to confirm.
+      const isResuming = !!cmdArgs?.resumeSessionId;
+      const isConfirming = forceMode === 'build';
+
+      if (!isResuming && !isConfirming) {
+        await chatAgent.showBuildPlan(prompt, provider, apiKey);
+        return; // Wait for user to type 'yes' or 'go'
+      }
+
+      // ── Actually run the build pipeline ─────────────────────────────────────
       const pipelineGuard = WorkspaceGuard.getInstance();
       const currentSession = cmdArgs?.resumeSessionId ?? ('session-' + Date.now());
-      if (!pipelineGuard.acquire(currentSession, userPrompt.trim())) {
+      if (!pipelineGuard.acquire(currentSession, prompt)) {
         const lockInfo = pipelineGuard.getLockInfo();
         const msg = lockInfo
-          ? `ZOZO is already running: "${lockInfo.prompt.slice(0, 40)}..." (started ${new Date(lockInfo.startedAt).toLocaleTimeString()})`
-          : 'ZOZO is already running. Wait for it to finish.';
-        vscode.window.showWarningMessage(msg);
+          ? `ZOZO is already building: "${lockInfo.prompt.slice(0, 40)}..." Wait for it to finish.`
+          : 'ZOZO is already running a build.';
+        PipelineEventBus.getInstance().emit({ type: 'chat_system_message', sessionId: 'system', text: `⚠️ ${msg}` });
         return;
       }
 
       try {
-        // 2. Provider selection
-        const provider = await vscode.window.showQuickPick([...PROVIDERS], {
-          placeHolder: "Select which AI to use",
-          ignoreFocusOut: true,
-        });
-        if (!provider) return;
 
-        // 3. API key retrieval
-        const apiKey = await vault.getKey(provider);
-        if (!apiKey) {
-          vscode.window.showErrorMessage(
-            `❌ ZOZO: No ${provider} API key found. Run "ZOZO: Set API Key" and select ${provider}.`
-          );
-          return;
-        }
-
-        // 4. Workspace root
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders || workspaceFolders.length === 0) {
+        if (!workspaceRoot) {
           vscode.window.showErrorMessage("❌ ZOZO: No workspace folder open.");
           return;
-        }
-        const workspaceRoot = workspaceFolders[0].uri.fsPath;
-
-        // ── EDIT MODE: intercept simple edits before full pipeline ────────
-        const { EditAgent } = await import('./engine/EditAgent');
-        const editAgent = new EditAgent();
-        const prompt = userPrompt.trim();
-
-        if (editAgent.isEditRequest(prompt)) {
-          const editPlan = await editAgent.plan(prompt, workspaceRoot, provider, apiKey);
-
-          if (!editPlan.isFullRebuild && editPlan.confidence >= 60) {
-            vscode.window.showInformationMessage(
-              `ZOZO Edit mode: ${editPlan.description}`
-            );
-
-            const editResult = await editAgent.execute(editPlan, prompt, workspaceRoot, provider, apiKey);
-
-            if (editResult.success) {
-              vscode.window.showInformationMessage(
-                `✅ ZOZO edited: ${editResult.description}`
-              );
-              return;  // Done — no need to run full Orchestrator
-            }
-            // If edit failed, fall through to full build
-            vscode.window.showInformationMessage('Edit mode failed — running full build instead');
-          }
         }
 
         // 5. Output channel
@@ -168,13 +415,40 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         outputChannel.appendLine(`Provider: ${provider}`);
         outputChannel.appendLine(`Prompt: ${userPrompt.trim()}\n`);
 
-        // 5.5 Build Profile capture — 5 structured questions
+        // 5.5 Build Profile capture — chat-based intent card
         const profileCapture = new BuildProfileCapture();
-        let buildProfile = await profileCapture.capture(prompt, provider);
+        let buildProfile = await profileCapture.captureFromChat(prompt, provider);
 
         if (!buildProfile) {
           outputChannel.appendLine('Build profile cancelled by user');
           return;
+        }
+
+        // ── Component Link Scraper + Governor ────────────────────────────────
+        // Reads [ComponentLinks:...] and [ComponentStrategy:...] from prompt
+        const resourceAgent = new ResourceAgent();
+        const firecrawlKey2 = await vault.getKey('Firecrawl').catch(() => '') ?? '';
+        const compLog = (msg: string) => outputChannel.appendLine(msg);
+        const compStrategy = prompt.match(/\[ComponentStrategy:\s*(\w+)\]/i)?.[1] ?? 'auto';
+
+        let componentHint = '';
+        if (compStrategy === 'links' && prompt.includes('[ComponentLinks:')) {
+          const scraped = await resourceAgent.scrapeComponentLinks(prompt, firecrawlKey2, compLog);
+          if (scraped.length > 0) {
+            componentHint = '\n\n## EXTRACTED OPEN-SOURCE COMPONENTS\n' +
+              scraped.map(r =>
+                `### ${r.name}\n${r.description}\n\`\`\`tsx\n${r.code.slice(0, 4000)}\n\`\`\``
+              ).join('\n\n') +
+              '\n\nIMPORTANT: Use the EXACT code above as the base implementation. ' +
+              'Integrate it into the page naturally. Install all required npm deps shown.';
+            PipelineEventBus.getInstance().emit({
+              type: 'chat_system_message', sessionId: 'resource',
+              text: `🔗 Extracted ${scraped.length} open-source component(s) — building with real code.`,
+            });
+          }
+        } else {
+          // Auto Governor — Senior design lead picks best tech stack
+          componentHint = resourceAgent.governorAutoSelect(prompt, compLog);
         }
 
         // Efficient mode needs a Gemini key for free agents (Planner + Design)
@@ -228,7 +502,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               ...buildProfile,
               complexity: 'normal' as any,
               efficient: false,
-              selectedModel: provider.toLowerCase() === 'anthropic' ? 'claude-sonnet-4-6'
+              selectedModel: provider.toLowerCase() === 'anthropic' ? 'claude-sonnet-5'
                 : provider.toLowerCase() === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini',
               pipelineMode: 'express',
             };
@@ -255,8 +529,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           async (progress) => {
             try {
               progress.report({ message: "Running multi-agent pipeline..." });
+              // Fetch Firecrawl key from vault (non-blocking — empty string if not set)
+              const firecrawlKey = await vault.getKey('Firecrawl').catch(() => '') ?? '';
+              // Inject component hint (extracted open-source code OR governor selection)
+              const enrichedPrompt = componentHint
+                ? userPrompt.trim() + componentHint
+                : userPrompt.trim();
               await runOrchestration(
-                userPrompt.trim(),
+                enrichedPrompt,
                 provider,
                 apiKey,
                 workspaceRoot,
@@ -266,12 +546,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                   resumeFromStep: cmdArgs?.resumeFromStep ?? 0,
                   buildProfile,
                   geminiKey: geminiKeyForEfficient,
+                  firecrawlKey,
                 }
               );
             } catch (err: unknown) {
               const message = err instanceof Error ? err.message : String(err);
               outputChannel.appendLine(`\n❌ FATAL: ${message}`);
               vscode.window.showErrorMessage(`❌ ZOZO failed: ${message}`);
+              PipelineEventBus.getInstance().emit({
+                type: 'build_failed',
+                sessionId: currentSession,
+                error: message
+              });
             }
           }
         );
@@ -279,40 +565,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         PipelineEventBus.getInstance().reset();
         pipelineGuard.release(currentSession);
       }
+      } catch (err: any) {
+        const msg = err?.message ?? String(err) ?? 'unknown error';
+        console.error('[ZOZO] promptAI error:', msg, err);
+        vscode.window.showErrorMessage(`❌ ZOZO failed: ${msg}`);
+        PipelineEventBus.getInstance().emit({
+          type: 'chat_system_message',
+          sessionId: 'system',
+          text: `⚠️ ZOZO error: ${msg}`,
+          isError: true
+        });
+      }
     }
   );
 
-  // ── Chat — Conversational AI Assistant ─────────────────────────────────────
+  // ── Chat — Focus the sidebar (no more separate editor panel) ───────────────
   const chatCmd = vscode.commands.registerCommand(
     "zozo.chat",
     async () => {
-      // 1. Provider selection
-      const provider = await vscode.window.showQuickPick([...PROVIDERS], {
-        placeHolder: "Select which AI to use for chat",
-        ignoreFocusOut: true,
-      });
-      if (!provider) return;
+      await vscode.commands.executeCommand('zozo.chatView.focus');
+    }
+  );
 
-      // 2. API key retrieval
-      const apiKey = await vault.getKey(provider);
-      if (!apiKey) {
-        vscode.window.showErrorMessage(
-          `❌ ZOZO: No ${provider} API key found. Run "ZOZO: Set API Key" first.`
-        );
-        return;
+  // ── Delete API Key ───────────────────────────────────────────────────────────
+  const deleteApiKeyCmd = vscode.commands.registerCommand(
+    "zozo.deleteApiKey",
+    async (args?: { provider: string }) => {
+      const provider = args?.provider;
+      if (provider) {
+        await vault.deleteKey(provider);
+        vscode.window.showInformationMessage(`🗑️ ZOZO: ${provider} API key deleted.`);
       }
-
-      // 3. Workspace root
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      if (!workspaceFolders || workspaceFolders.length === 0) {
-        vscode.window.showErrorMessage("❌ ZOZO: No workspace folder open.");
-        return;
-      }
-      const workspaceRoot = workspaceFolders[0].uri.fsPath;
-
-      // 4. Create output channel and chat panel
-      const outputChannel = vscode.window.createOutputChannel("ZOZO Chat");
-      new ZOZOChatPanel(workspaceRoot, provider, apiKey, outputChannel);
     }
   );
 
@@ -967,7 +1250,7 @@ function saveFirecrawl() {
     }
   );
 
-  context.subscriptions.push(setApiKeyCmd, testCoreLoopCmd, promptAICmd, chatCmd, showCostCmd, resumeBuildCmd, forceUnlockCmd, inspectBuildCmd, cancelBuildCmd, openSettingsCmd, setProfileCmd, setGeminiKeyCmd, previewCmd);
+  context.subscriptions.push(setApiKeyCmd, testCoreLoopCmd, promptAICmd, chatCmd, deleteApiKeyCmd, showCostCmd, resumeBuildCmd, forceUnlockCmd, inspectBuildCmd, cancelBuildCmd, openSettingsCmd, setProfileCmd, setGeminiKeyCmd, previewCmd);
 
   // Register ZOZO as a sidebar WebviewView (shows in activity bar)
   const chatSidebarProvider = new ChatSidebarProvider(context);
@@ -983,7 +1266,7 @@ function saveFirecrawl() {
   const idleBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
   idleBar.text = '$(zap) ZOZO';
   idleBar.tooltip = 'ZOZO ready — click to open chat';
-  idleBar.command = 'zozo.chat';
+  idleBar.command = 'zozo.chatView.focus';
   idleBar.show();
   context.subscriptions.push(idleBar);
 

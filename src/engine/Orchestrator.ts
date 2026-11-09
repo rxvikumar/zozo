@@ -61,6 +61,8 @@ import { BuildProfileCapture, type BuildProfile } from './BuildProfile';
 import { setModelOverrides, streamFromLLM } from './NetworkNode';
 import { atomicWrite } from './AtomicWriter';
 import { saveProjectState, buildProjectState, loadProjectState } from './ProjectMemory';
+import { createEmptyScorecard, emitScorecard, formatScorecard, type EvalScorecard } from './EvalMetrics';
+import { buildWaves, waitForWaveApproval } from './ComponentWaveEngine';
 
 
 const EXCLUDED_DIRS = new Set([
@@ -138,6 +140,7 @@ export async function runOrchestration(
     resumeFromStep?: number
     buildProfile?: BuildProfile
     geminiKey?: string         // Gemini key for Efficient mode (Planner+Design use free tier)
+    firecrawlKey?: string      // Firecrawl key for web scraping — if set, prompts user in chat
   }
 ): Promise<void> {
 
@@ -182,6 +185,9 @@ export async function runOrchestration(
     const bus = PipelineEventBus.getInstance()
     bus.startSession(session.id)
     const pipelineStartTime = Date.now()
+
+    // ── Scorecard: accumulates metrics throughout pipeline ────────────────────
+    const scorecard: EvalScorecard = createEmptyScorecard();
 
     // ── [1] SUPERVISOR ───────────────────────────────────────────────────────
     const supervisor = new SupervisorAgent()
@@ -396,13 +402,67 @@ export async function runOrchestration(
     logger.info(`${plan.filesToCreate.length} files planned`);
     logger.info(`Tech Stack: ${plan.techStack.join(", ")}`);
     logger.info(`Framework: ${plan.framework}`);
+    logger.info(`Task Type: ${plan.taskType ?? 'unknown'} | Budget: ${plan.fileBudgetUsed}/${plan.fileBudgetAllowed} | Efficiency: ${plan.fileEfficiency ?? 0}%`);
     logger.info(`Components: ${plan.estimatedComponents}`);
     if (plan.folderStructure) {
       logger.info(`Folder Structure:\n${plan.folderStructure}`);
     }
+
+    // Update scorecard with planner metrics
+    scorecard.fileBudgetUsed    = plan.fileBudgetUsed    ?? plan.filesToCreate.length;
+    scorecard.fileBudgetAllowed = plan.fileBudgetAllowed ?? 15;
+    scorecard.fileEfficiency    = plan.fileEfficiency    ?? 100;
+    scorecard.budgetCompliance  = (plan.fileBudgetUsed ?? plan.filesToCreate.length) <= (plan.fileBudgetAllowed ?? 40);
+
+    // Emit planner metrics to sidebar immediately
+    bus.emit({ type: 'step_metric', sessionId: session.id, stepName: 'planner', metric: 'files_planned', value: plan.filesToCreate.length, target: plan.fileBudgetAllowed ?? 15, passed: scorecard.budgetCompliance });
+    bus.emit({ type: 'step_metric', sessionId: session.id, stepName: 'planner', metric: 'file_efficiency', value: scorecard.fileEfficiency, target: 80, passed: scorecard.fileEfficiency >= 80 });
     sessionState.checkpoint(session.id, 3, STEP.PLAN, `${plan.filesToCreate?.length ?? 0} files planned`, undefined, stepStart);
     bus.emit({ type: 'step_complete', sessionId: session.id, stepNumber: 3, stepName: STEP.PLAN })
     WorkspaceGuard.getInstance().updateStep('Planning');
+
+    // ── PLAN APPROVAL GATE ────────────────────────────────────────────────────
+    // Surface the full plan to the user in chat, then wait for Approve/Cancel.
+    bus.emit({
+      type: 'plan_ready',
+      sessionId: session.id,
+      planFiles:           plan.filesToCreate.map((f: any) => typeof f === 'string' ? f : (f?.path ?? f?.name ?? String(f))),
+      planTechStack:       plan.techStack,
+      planFramework:       plan.framework,
+      planTaskType:        plan.taskType ?? 'app',
+      planBudget:          plan.fileBudgetAllowed ?? 15,
+      planEfficiency:      plan.fileEfficiency ?? 100,
+      planFolderStructure: plan.folderStructure ?? '',
+    } as any)
+
+    logger.info('⏳ Waiting for user to approve the plan in chat...')
+
+    const planApproved = await new Promise<boolean>((resolve) => {
+      let done = false
+      // 5-minute timeout — user might be reading the plan
+      const timer = setTimeout(() => {
+        if (!done) { done = true; resolve(false) }
+      }, 5 * 60 * 1000)
+
+      const unsub = bus.subscribe(event => {
+        if (done) return
+        if (event.sessionId !== session.id) return
+        if ((event as any).type === 'plan_approved') {
+          done = true; clearTimeout(timer); unsub(); resolve(true)
+        } else if ((event as any).type === 'plan_cancelled') {
+          done = true; clearTimeout(timer); unsub(); resolve(false)
+        }
+      })
+    })
+
+    if (!planApproved) {
+      logger.warning('Plan rejected or timed out — build cancelled.')
+      bus.emit({ type: 'build_cancelled', sessionId: session.id })
+      bus.reset()
+      return
+    }
+    logger.success('✅ Plan approved — continuing to Design + Build')
+    // ── END PLAN GATE ─────────────────────────────────────────────────────────
 
     // ── [5] DESIGN AGENT ───────────────────────────────────────────────────
     if (bus.isCancelled()) { logger.warning('Build cancelled by user'); bus.reset(); return }
@@ -469,6 +529,52 @@ export async function runOrchestration(
         } else {
           logger.warning('Resource fetch returned 0 results. Builder will use DesignPresets (hardcoded Awwwards patterns)')
         }
+
+        // ── Firecrawl: ask user in chat, then scrape if approved ─────────────
+        const firecrawlKey = options?.firecrawlKey ?? ''
+        if (firecrawlKey) {
+          try {
+            // Emit the Yes/No card to the sidebar
+            bus.emit({ type: 'firecrawl_prompt', sessionId: session.id } as any)
+
+            // Wait for user answer (30s timeout → skip if no response)
+            const userApproved = await new Promise<boolean>((resolve) => {
+              let done = false
+              const timer = setTimeout(() => {
+                if (!done) { done = true; resolve(false) }  // default: skip
+              }, 30_000)
+
+              const unsub = bus.subscribe(event => {
+                if (done) return
+                if ((event as any).type !== 'firecrawl_answer') return
+                if (event.sessionId !== session.id) return
+                done = true
+                clearTimeout(timer)
+                unsub()
+                resolve((event as any).approved ?? false)
+              })
+            })
+
+            if (userApproved) {
+              logger.info('🔥 Firecrawl: user approved — scraping for design inspiration...')
+              // @ts-ignore
+              const firecrawlDesign = typeof (resourceAgent as any).fetchDesignInspiration === 'function'
+                ? await (resourceAgent as any).fetchDesignInspiration(userPrompt, template, firecrawlKey, outputChannel)
+                : null
+              if (firecrawlDesign) {
+                resourceHint += '\n\n## REFERENCE SITE DESIGN (Firecrawl)\n' + firecrawlDesign
+                logger.success(`Firecrawl: injected ${firecrawlDesign.length} chars of real-site design`)
+                bus.emit({ type: 'chat_system_message', sessionId: session.id, text: '🔥 Firecrawl scraped real sites. Design context injected.' })
+              }
+            } else {
+              logger.info('Firecrawl: user skipped — using DesignPresets')
+            }
+          } catch (fcErr: unknown) {
+            logger.info(`Firecrawl skipped: ${fcErr instanceof Error ? fcErr.message : String(fcErr)}`)
+          }
+        } else {
+          logger.info('Firecrawl: no key — add it in ⚙️ Settings to enable web scraping')
+        }
       } catch (err: unknown) {
         logger.warning(`Resource Intelligence skipped: ${err instanceof Error ? err.message : String(err)}`)
       }
@@ -521,26 +627,10 @@ export async function runOrchestration(
     outputChannel.appendLine(`[ZOZO] \uD83C\uDFA8 Design injected: type=${detectedAppType} | ctx=${premiumDesignCtx.length} chars`)
 
     // 2. Web search for design inspiration
-    let webInspiration = ''
-    outputChannel.appendLine(`[RESOURCE] 🔎 Starting web search (apiKey=${apiKey ? 'present' : 'MISSING'})...`)
-    try {
-      const searchAgent = new ResourceAgent()
-      webInspiration = await searchAgent.searchWebForInspiration(
-        userPrompt,
-        'hybrid',
-        detectedAppType,
-        outputChannel,
-        apiKey
-      )
-      if (webInspiration) {
-        outputChannel.appendLine(`[RESOURCE] \u2705 Web inspiration injected (${webInspiration.length} chars)`)
-      } else {
-        outputChannel.appendLine('[RESOURCE] \u26A0\uFE0F Web search returned empty')
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      outputChannel.appendLine(`[RESOURCE] \u274C Web search FAILED: ${msg}`)
-    }
+    // ⚡ OPTIMIZATION: Web search skipped — uses expensive Anthropic web search beta API
+    // DesignPresets (above) provide high-quality hardcoded design context for free.
+    const webInspiration = ''
+    outputChannel.appendLine('[RESOURCE] ⚡ Web search skipped — using DesignPresets (free, faster)')
 
     // 3. Media (images/videos) — always (zero cost, zero network)
     const media = fetchMedia(userPrompt, outputChannel)
@@ -614,6 +704,16 @@ export async function runOrchestration(
       logger.info('ImportValidator: no violations found')
     }
 
+    // ── [7.6] CROSS-REFERENCE IMPORTS AGAINST PLANNED FILES ─────────────
+    const plannedFileValidation = importValidator.validateAgainstPlannedFiles(builderOutput, plan.filesToCreate)
+    if (plannedFileValidation.fixedCount > 0) {
+      builderOutput = plannedFileValidation.xml
+      logger.success(`ImportValidator: injected ${plannedFileValidation.fixedCount} stub(s) for missing component imports`)
+      for (const v of plannedFileValidation.violations.slice(0, 5)) {
+        logger.info(`  Missing: ${v.importPath} → ${v.correction}`)
+      }
+    }
+
     // ── [8] UIEngine: deterministic fixes before quality gate ──────────────
     const uiEngine = new UIEngine()
     const uiResult = uiEngine.fix(builderOutput)
@@ -624,24 +724,10 @@ export async function runOrchestration(
       logger.info('UIEngine: no violations found')
     }
 
-    // Code review pass — fix syntax errors before writing to disk
-    builderOutput = uiResult.xml
-    try {
-      const reviewPrompt = `Review this generated Next.js code XML and fix ANY syntax errors, unclosed JSX tags, unterminated strings, or truncated files. Return the complete fixed XML only:\n\n${builderOutput.slice(0, 15000)}`
-      const reviewedCode = await streamFromLLM(
-        reviewPrompt,
-        provider,   // use actual pipeline provider — was hardcoded 'gemini', caused 401 for Anthropic/OpenAI users
-        apiKey,     // use actual API key — was using geminiKey which may be undefined
-        'You are a code reviewer. Fix all syntax errors in the XML. Return only the fixed XML. Never truncate.',
-        { maxOutputTokens: 8000 }
-      )
-      if (reviewedCode && reviewedCode.includes('<zozo_action')) {
-        builderOutput = reviewedCode
-        outputChannel.appendLine('[REVIEW] \u2705 Code review pass complete')
-      }
-    } catch (reviewErr: unknown) {
-      outputChannel.appendLine(`[REVIEW] \u26A0\uFE0F Review skipped: ${reviewErr instanceof Error ? reviewErr.message : String(reviewErr)}`)
-    }
+
+    // ⚡ OPTIMIZATION: Code review LLM pass removed — was costing $0.10-0.20 extra per build.
+    // UIEngine deterministic fixes (above) handle common issues without any API call.
+
 
     // Builder step complete — quality gate runs AFTER files are written to disk
     sessionState.checkpoint(
@@ -872,6 +958,58 @@ export async function runOrchestration(
     );
     bus.emit({ type: 'step_complete', sessionId: session.id, stepNumber: 10, stepName: STEP.EXECUTE })
     WorkspaceGuard.getInstance().updateStep('Writing files');
+
+    // ── WAVE PREVIEW — show user each wave of files before quality gate ──────
+    // Only activate when more than 6 files were written (small builds skip)
+    if (filesWritten.length > 6) {
+      try {
+        const waveGroups = buildWaves(plan.filesToCreate)
+        let stoppedAtWave = -1
+
+        for (const wave of waveGroups) {
+          if (bus.isCancelled()) break
+
+          // Filter written files that belong to this wave
+          const waveFilesWritten = filesWritten.filter(f =>
+            wave.files.some(wf => f.endsWith(wf.replace(/^\//,'')) || f.endsWith(wf))
+          )
+          if (waveFilesWritten.length === 0) continue
+
+          // Ask user — sidebar renders [Continue] [Modify] [Stop]
+          const decision = await waitForWaveApproval(
+            { ...wave, files: waveFilesWritten, filesInWave: waveFilesWritten } as any,
+            session.id
+          )
+
+          logger.info(`Wave ${wave.waveNumber} decision: ${decision}`)
+
+          if (decision === 'stop') {
+            stoppedAtWave = wave.waveNumber
+            logger.warning(`User stopped build at ${wave.label} — skipping remaining waves`)
+            // Remove files from waves AFTER the stop point
+            const laterWaves = waveGroups.filter(w => w.waveNumber > wave.waveNumber)
+            const filesToRemove = laterWaves.flatMap(w => w.files)
+            for (const rel of filesToRemove) {
+              const abs = path.join(workspaceRoot, rel)
+              if (fs.existsSync(abs)) {
+                try { fs.unlinkSync(abs) } catch {}
+              }
+            }
+            break
+          }
+          // 'continue' or 'modify' → modify just shows a message, build continues
+          if (decision === 'modify') {
+            logger.info('User requested modifications — continuing build, will re-run quality gate')
+          }
+        }
+
+        if (stoppedAtWave > 0) {
+          logger.warning(`Build stopped early at wave ${stoppedAtWave} by user request`)
+        }
+      } catch (waveErr: unknown) {
+        logger.info(`Wave preview skipped: ${waveErr instanceof Error ? waveErr.message : String(waveErr)}`)
+      }
+    }
 
     // Save project memory
     const previousState = loadProjectState(workspaceRoot)
@@ -1495,6 +1633,22 @@ ${content}`
       fileCount,
       totalCostUsd: sessionStats.estimatedCostUsd,
     })
+
+    // ── EVAL SCORECARD — emit final grade to sidebar ────────────────────────
+    scorecard.buildSuccess      = true;
+    scorecard.filesGenerated    = fileCount;
+    scorecard.qualityScore      = qgScore?.overall ?? 0;
+    scorecard.codeScore         = qgScore?.codeScore ?? 0;
+    scorecard.designScore       = qgScore?.designScore ?? 0;
+    scorecard.retryCount        = qualityAttempt - 1;
+    scorecard.buildDurationMs   = Date.now() - pipelineStartTime;
+    scorecard.estimatedCostUsd  = sessionStats.estimatedCostUsd;
+    // runtimePassed and tsErrors are set during HealthCheck below
+
+    const formattedScorecard = formatScorecard(scorecard);
+    logger.info(formattedScorecard);
+    emitScorecard(scorecard, session.id);
+
     setModelOverrides(null, null, null)  // reset all model overrides for next run
     bus.reset()
 

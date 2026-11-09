@@ -151,32 +151,46 @@ isFullRebuild: true only for auth, database, or structural changes.`
 
       const systemPrompt = `You are a precise code editor.
 Modify ONLY what the user asks. Change nothing else.
-Return ONLY the complete modified file content. No explanation. No markdown.
-The file must remain valid TypeScript/TSX. Never truncate. Never omit imports.`
+Return your changes using SEARCH/REPLACE blocks.
+
+Format:
+<<<<
+[exact original code to replace]
+====
+[new code to insert]
+>>>>
+
+Rules:
+1. The search block must perfectly match the existing code (including whitespace).
+2. You can use multiple blocks.
+3. Only output blocks. Do not output the entire file.`
 
       try {
         const newContent = await streamFromLLM(
           `File: ${filePath}\n\nUser request: "${prompt}"\n\nCurrent file:\n${currentContent.slice(0, 6000)}`,
           provider, apiKey, systemPrompt,
-          { maxOutputTokens: 6000 }
+          { maxOutputTokens: 2000 }
         )
 
-        const stripped = newContent.replace(/```[\w]*\n?/g, '').replace(/\n?```/g, '').trim()
+        let stripped = newContent.replace(/```[\w]*\n?/g, '').replace(/\n?```/g, '').trim()
 
-        // 1. Must have meaningful content
-        if (stripped.length < 50) continue
+        const blocks = [...stripped.matchAll(/<<<<\n([\s\S]*?)\n====\n([\s\S]*?)\n>>>>/g)]
+        if (blocks.length === 0) continue
 
-        // 2. Must have a valid export
-        const hasExport = stripped.includes('export default') || stripped.includes('export function') || stripped.includes('export const')
-        if (!hasExport) continue
+        let newFileContent = currentContent
+        let appliedCount = 0
 
-        // 3. Braces must balance — mismatched = truncated or hallucinated
-        const openBraces = (stripped.match(/{/g) || []).length
-        const closeBraces = (stripped.match(/}/g) || []).length
-        if (Math.abs(openBraces - closeBraces) > 2) continue
+        for (const match of blocks) {
+          const search = match[1]
+          const replace = match[2]
+          if (newFileContent.includes(search)) {
+            newFileContent = newFileContent.replace(search, replace)
+            appliedCount++
+          }
+        }
 
-        // 4. Must be at least 30% the size of original — not a stub replacement
-        if (stripped.length < currentContent.length * 0.3) continue
+        if (appliedCount === 0 || newFileContent === currentContent) continue
+        stripped = newFileContent
 
         // 5. Write with backup — restore original if write fails
         const backupPath = fullPath + '.zozo-backup'

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode'
-import { GEMINI_MODELS } from './NetworkNode'
+import { GEMINI_MODELS, getExplicitAnthropicOverride, getExplicitOpenaiOverride, getExplicitGeminiOverride } from './NetworkNode'
+import { PipelineEventBus } from './PipelineEventBus'
 
 export type ComplexityMode  = 'normal' | 'ultra' | 'max'
 export type UIStyle         = 'minimal' | 'modern' | 'premium'
@@ -29,11 +30,16 @@ function selectModel(
   animation: AnimationLevel,
   provider: string
 ): string {
+  // Respect the globally set UI model override first
+  if (provider.toLowerCase() === 'gemini' && getExplicitGeminiOverride()) return getExplicitGeminiOverride()!;
+  if (provider.toLowerCase() === 'anthropic' && getExplicitAnthropicOverride()) return getExplicitAnthropicOverride()!;
+  if (provider.toLowerCase() === 'openai' && getExplicitOpenaiOverride()) return getExplicitOpenaiOverride()!;
+
   switch (provider.toLowerCase()) {
     case 'anthropic':
-      if (complexity === 'max') return 'claude-opus-4-6'
-      if (complexity === 'ultra') return 'claude-opus-4-6'
-      return 'claude-sonnet-4-6'  // Normal always uses Sonnet
+      if (complexity === 'max') return 'claude-opus-4-8'
+      if (complexity === 'ultra') return 'claude-opus-4-8'
+      return 'claude-sonnet-5'  // Normal always uses Sonnet
 
     case 'gemini':
       if (complexity === 'max')   return 'gemini-3.1-pro-preview'   // paid
@@ -289,4 +295,153 @@ export class BuildProfileCapture {
       `If visual depth is "2d", do NOT import Three.js or @react-three/fiber.`,
     ].join('\n')
   }
+
+  /**
+   * Chat-based intent capture (replaces modal QuickPick flow).
+   * Emits an 'intent_card' with clickable chips to the sidebar.
+   * Returns a Promise that resolves when the user answers all questions,
+   * or falls back to smart auto-detected defaults after 90s timeout.
+   */
+  async captureFromChat(prompt: string, provider: string): Promise<BuildProfile | null> {
+    const bus = PipelineEventBus.getInstance()
+    const sessionId = bus.getCurrentSessionId() || 'profile'
+
+    return new Promise<BuildProfile | null>((resolve) => {
+      let resolved = false
+
+      // Auto-fallback: if user doesn't click in 90s, use smart defaults
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true
+          resolve(this.buildSmartDefaults(prompt, provider))
+        }
+      }, 90_000)
+
+      // Listen for user completing the intent card
+      const unsub = bus.subscribe(event => {
+        if (resolved) return
+        if (event.type !== 'intent_complete') return
+        if (event.sessionId !== sessionId) return
+
+        resolved = true
+        clearTimeout(timeout)
+        unsub()
+
+        const answers = (event.answers ?? {}) as Record<string, string>
+        resolve(this.buildProfileFromAnswers(answers, prompt, provider))
+      })
+
+      // Emit the intent card to the sidebar
+      bus.emit({
+        type: 'intent_card',
+        sessionId,
+        questions: [
+          {
+            id: 'appType',
+            text: 'What are you building?',
+            multiSelect: false,
+            options: [
+              { id: 'landing',    icon: '🚀', label: 'Landing page',   description: 'Fast, SEO-optimized, one page' },
+              { id: 'dashboard',  icon: '📊', label: 'Dashboard',       description: 'Charts, data, multi-section' },
+              { id: 'ecommerce',  icon: '🛒', label: 'E-commerce',      description: 'Products, cart, checkout' },
+              { id: 'saas',       icon: '🔐', label: 'SaaS App',        description: 'Auth, payments, API routes' },
+              { id: 'portfolio',  icon: '💼', label: 'Portfolio',        description: 'Personal, creative, minimal' },
+            ],
+          },
+          {
+            id: 'style',
+            text: 'Visual style?',
+            multiSelect: false,
+            options: [
+              { id: 'premium', icon: '✨', label: 'Premium dark',  description: 'Glassmorphism, rich animations', recommended: true },
+              { id: 'modern',  icon: '🎯', label: 'Modern clean',  description: 'Minimal, professional, fast-loading' },
+              { id: 'minimal', icon: '🧊', label: 'Minimal',       description: 'Pure layout, no effects' },
+            ],
+          },
+          {
+            id: 'animation',
+            text: 'Animation level?',
+            multiSelect: false,
+            options: [
+              { id: 'heavy', icon: '🎬', label: 'Heavy',  description: 'Parallax, stagger, complex motion' },
+              { id: 'light', icon: '💫', label: 'Light',  description: 'Subtle transitions', recommended: true },
+              { id: 'none',  icon: '⚡', label: 'None',   description: 'Static, fastest load' },
+            ],
+          },
+          {
+            id: 'depth',
+            text: 'Visual depth?',
+            multiSelect: false,
+            options: [
+              { id: 'hybrid', icon: '🌊', label: 'Hybrid',  description: 'Glassmorphism, gradients, depth', recommended: true },
+              { id: '2d',     icon: '📱', label: '2D flat',  description: 'Standard Tailwind, no 3D' },
+              { id: '3d',     icon: '🌐', label: '3D',       description: 'Three.js / WebGL hero' },
+            ],
+          },
+        ] as any[],
+      } as any)
+    })
+  }
+
+  /**
+   * Build a BuildProfile from intent card answers.
+   */
+  private buildProfileFromAnswers(
+    answers: Record<string, string>,
+    prompt: string,
+    provider: string
+  ): BuildProfile | null {
+    const uiStyle     = (answers['style'] ?? 'modern')    as UIStyle
+    const animation   = (answers['animation'] ?? 'light') as AnimationLevel
+    const visualDepth = (answers['depth'] ?? 'hybrid')    as VisualDepth
+    const complexity: ComplexityMode = 'normal'
+    const efficient = false
+
+    const inspiration: Inspiration[] = []
+    if (answers['appType'] === 'portfolio') inspiration.push('editorial', 'framer')
+    else if (answers['appType'] === 'ecommerce') inspiration.push('framer')
+    else inspiration.push('saas-clean')
+
+    return {
+      prompt,
+      complexity,
+      uiStyle,
+      animation,
+      visualDepth,
+      inspiration,
+      efficient,
+      selectedModel:    selectModel(complexity, visualDepth, animation, provider),
+      selectedProvider: provider,
+      pipelineMode:     selectPipelineMode(complexity, visualDepth),
+      designPreset:     selectPreset(inspiration, uiStyle),
+    }
+  }
+
+  /**
+   * Smart defaults when no intent card answers were received (timeout).
+   * Detects from prompt keywords instead.
+   */
+  private buildSmartDefaults(prompt: string, provider: string): BuildProfile {
+    const p = prompt.toLowerCase()
+    const uiStyle: UIStyle      = p.includes('minimal') ? 'minimal' : p.includes('luxury') || p.includes('premium') ? 'premium' : 'modern'
+    const animation: AnimationLevel = p.includes('no animation') || p.includes('static') ? 'none' : p.includes('heavy') || p.includes('cinematic') ? 'heavy' : 'light'
+    const visualDepth: VisualDepth  = p.includes('3d') || p.includes('three') ? '3d' : p.includes('glass') ? 'hybrid' : '2d'
+    const complexity: ComplexityMode = 'normal'
+    const inspiration: Inspiration[] = ['saas-clean']
+
+    return {
+      prompt,
+      complexity,
+      uiStyle,
+      animation,
+      visualDepth,
+      inspiration,
+      efficient: false,
+      selectedModel:    selectModel(complexity, visualDepth, animation, provider),
+      selectedProvider: provider,
+      pipelineMode:     selectPipelineMode(complexity, visualDepth),
+      designPreset:     selectPreset(inspiration, uiStyle),
+    }
+  }
 }
+

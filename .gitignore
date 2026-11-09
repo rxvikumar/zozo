@@ -6,9 +6,17 @@ dist/
 .zozo-temp/
 .zozo-memory.json
 
-# Debug/build logs
+# Environment and secrets
+.env
+.env.*
+*.env
+
+# Debug/build logs & temp files
 _scan.txt
 build_current.txt
 build_errors*.txt
 build_s*.txt
 tsc_errors*.txt
+tsc_final.txt
+temp_transcript*.txt
+test.html

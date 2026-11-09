@@ -2,7 +2,8 @@
   "name": "zozo-orchestrator",
   "displayName": "ZOZO Orchestrator",
   "description": "Deterministic AI orchestrator living natively inside VS Code",
-  "version": "0.1.0",
+  "version": "0.2.2",
+  "repository": "https://github.com/rxvikumar/zozo",
   "publisher": "zozo",
   "engines": {
     "vscode": "^1.85.0"
@@ -73,6 +74,10 @@
         "title": "ZOZO: Set Gemini API Key (Free)"
       },
       {
+        "command": "zozo.deleteApiKey",
+        "title": "ZOZO: Delete API Key"
+      },
+      {
         "command": "zozo.preview",
         "title": "ZOZO: Open Live Preview"
       }
@@ -129,13 +134,13 @@
     }
   },
   "scripts": {
-    "compile": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node"
+    "compile": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --watch"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
-    "esbuild": "^0.20.0",
+    "esbuild": "^0.28.1",
     "typescript": "^5.3.3"
-  },
-  "dependencies": {}
+  }
 }

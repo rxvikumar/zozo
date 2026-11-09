@@ -195,8 +195,6 @@ export class ResourceAgent {
     } catch { return [] }
   }
 
-  // ── Main fetch ─────────────────────────────────────────────────────────
-
   /**
    * Fetch relevant resources based on user intent.
    * Returns up to 8 resources ranked by relevance.
@@ -210,13 +208,13 @@ export class ResourceAgent {
     }
 
     const intent = this.detectIntent(userPrompt, template)
-    log(`[RESOURCE] \uD83C\uDF10 Searching for: ${intent.join(', ')}`)
+    log(`[RESOURCE] 🌐 Searching for: ${intent.join(', ')}`)
 
     // Check which resources have proven track records
     const proven = this.getBestResources(5)
     const provenNames = new Set(proven.map(p => p.name))
     if (proven.length > 0) {
-      log(`[RESOURCE] \u2B50 Proven resources: ${proven.map(p => p.name).join(', ')}`)
+      log(`[RESOURCE] ⭐ Proven resources: ${proven.map(p => p.name).join(', ')}`)
     }
 
     const [shadcnResults, aceternityResults] = await Promise.all([
@@ -224,14 +222,14 @@ export class ResourceAgent {
       this.fetchAceternity(intent).catch(() => [] as RawResource[]),
     ])
 
-    log(`[RESOURCE] \uD83D\uDCE6 Found: ${shadcnResults.length} shadcn + ${aceternityResults.length} aceternity`)
+    log(`[RESOURCE] 📦 Found: ${shadcnResults.length} shadcn + ${aceternityResults.length} aceternity`)
 
     const all = [...shadcnResults, ...aceternityResults]
 
     if (all.length === 0) {
-      log(`[RESOURCE] \u274C Web fetch returned empty \u2014 Builder will use hardcoded DesignPresets`)
+      log(`[RESOURCE] ❌ Web fetch returned empty — Builder will use hardcoded DesignPresets`)
     } else {
-      log(`[RESOURCE] \u2705 Patterns extracted: ${all.map(r => r.name).join(', ')}`)
+      log(`[RESOURCE] ✅ Patterns extracted: ${all.map(r => r.name).join(', ')}`)
     }
 
     // Boost score of proven resources via tag
@@ -242,6 +240,187 @@ export class ResourceAgent {
       .filter((r, i, arr) => arr.findIndex(x => x.name === r.name) === i)
       .slice(0, 8)
   }
+
+  // ── Pre-verified component registry (GitHub raw — zero API calls) ─────────
+  // Maps component slug → { githubRaw, npmDep, description }
+  private static readonly COMPONENT_REGISTRY: Record<string, { raw: string; deps: string[]; desc: string }> = {
+    // React Bits
+    'reactbits.dev/components/flex-carousel':       { raw: 'https://raw.githubusercontent.com/DavidHDev/react-bits/main/src/components/FlexCarousel/FlexCarousel.jsx',       deps: ['ogl'],                   desc: 'Infinite liquid-glass image carousel (WebGL + OGL)' },
+    'reactbits.dev/components/holo-card':           { raw: 'https://raw.githubusercontent.com/DavidHDev/react-bits/main/src/components/HoloCard/HoloCard.jsx',               deps: [],                        desc: 'Holographic foil tilt card' },
+    'reactbits.dev/components/circular-carousel':   { raw: 'https://raw.githubusercontent.com/DavidHDev/react-bits/main/src/components/CircularCarousel/CircularCarousel.jsx', deps: [],                       desc: 'Rotating circular item carousel' },
+    'reactbits.dev/components/infinite-spiral':     { raw: 'https://raw.githubusercontent.com/DavidHDev/react-bits/main/src/components/InfiniteSpiral/InfiniteSpiral.jsx',   deps: [],                        desc: 'Infinite spiral scroll reveal' },
+    'reactbits.dev/components/depth-carousel':      { raw: 'https://raw.githubusercontent.com/DavidHDev/react-bits/main/src/components/DepthCarousel/DepthCarousel.jsx',     deps: [],                        desc: 'Depth-based 3D card carousel' },
+    'reactbits.dev/components/morph-slider':        { raw: 'https://raw.githubusercontent.com/DavidHDev/react-bits/main/src/components/MorphSlider/MorphSlider.jsx',         deps: ['ogl'],                   desc: 'WebGL morphing image slider' },
+    'reactbits.dev/components/drift-wall':          { raw: 'https://raw.githubusercontent.com/DavidHDev/react-bits/main/src/components/DriftWall/DriftWall.jsx',             deps: [],                        desc: 'Physics-based drifting card wall' },
+    // Aceternity UI
+    'ui.aceternity.com/components/card-hover-effect':     { raw: 'https://raw.githubusercontent.com/aceternity/ui/main/components/ui/card-hover-effect.tsx',  deps: ['framer-motion', 'clsx'],  desc: 'Animated hover reveal card grid' },
+    'ui.aceternity.com/components/aurora-background':     { raw: 'https://raw.githubusercontent.com/aceternity/ui/main/components/ui/aurora-background.tsx',  deps: ['framer-motion'],           desc: 'Animated aurora/gradient hero background' },
+    'ui.aceternity.com/components/background-beams':      { raw: 'https://raw.githubusercontent.com/aceternity/ui/main/components/ui/background-beams.tsx',   deps: [],                          desc: 'Animated beam rays background' },
+    'ui.aceternity.com/components/sparkles':              { raw: 'https://raw.githubusercontent.com/aceternity/ui/main/components/ui/sparkles.tsx',            deps: ['tsparticles-slim'],        desc: 'Sparkle particle overlay' },
+    'ui.aceternity.com/components/spotlight':             { raw: 'https://raw.githubusercontent.com/aceternity/ui/main/components/ui/spotlight.tsx',           deps: [],                          desc: 'Cursor-following spotlight effect' },
+    'ui.aceternity.com/components/3d-card':               { raw: 'https://raw.githubusercontent.com/aceternity/ui/main/components/ui/3d-card.tsx',             deps: ['framer-motion'],           desc: 'Mouse-tilt 3D perspective card' },
+    // Magic UI
+    'magicui.design/components/particles':          { raw: 'https://raw.githubusercontent.com/magicuidesign/magicui/main/registry/magicui/particles.tsx',          deps: ['framer-motion'],        desc: 'Interactive particle canvas background' },
+    'magicui.design/components/globe':              { raw: 'https://raw.githubusercontent.com/magicuidesign/magicui/main/registry/magicui/globe.tsx',              deps: ['cobe'],                  desc: 'Animated 3D WebGL globe' },
+    'magicui.design/components/marquee':            { raw: 'https://raw.githubusercontent.com/magicuidesign/magicui/main/registry/magicui/marquee.tsx',            deps: ['framer-motion'],        desc: 'Infinite horizontal scrolling marquee' },
+    'magicui.design/components/animated-beam':      { raw: 'https://raw.githubusercontent.com/magicuidesign/magicui/main/registry/magicui/animated-beam.tsx',      deps: ['framer-motion'],        desc: 'SVG beam connecting elements' },
+    'magicui.design/components/border-beam':        { raw: 'https://raw.githubusercontent.com/magicuidesign/magicui/main/registry/magicui/border-beam.tsx',        deps: ['framer-motion'],        desc: 'Animated rotating border glow' },
+    'magicui.design/components/meteor':             { raw: 'https://raw.githubusercontent.com/magicuidesign/magicui/main/registry/magicui/meteors.tsx',             deps: [],                       desc: 'Falling meteor particle effect' },
+    // Auto-governor curated set (for Mode A — no links given)
+    '__governor__3d-landing':    { raw: '', deps: ['three', '@react-three/fiber', '@react-three/drei', 'framer-motion'],            desc: 'Three.js R3F hero + particle constellation + scroll camera' },
+    '__governor__saas-dashboard':{ raw: '', deps: ['recharts', 'framer-motion', 'lucide-react', 'class-variance-authority'],        desc: 'Dark SaaS analytics dashboard (recharts + motion stat cards)' },
+    '__governor__luxury-landing':{ raw: '', deps: ['framer-motion', 'lenis', 'gsap'],                                               desc: 'Luxury scrolljack + kinetic typography + gold accents' },
+  }
+
+  /**
+   * Scrape all component links found in [ComponentLinks: url|url] prompt tag.
+   * Strategy: 1. Firecrawl live scrape  2. Pre-verified GitHub raw  3. LLM writes from memory
+   * Returns an array of extracted RawResource objects ready for BuilderAgent injection.
+   */
+  async scrapeComponentLinks(
+    prompt: string,
+    firecrawlKey: string,
+    log: (msg: string) => void
+  ): Promise<RawResource[]> {
+    const results: RawResource[] = []
+
+    // 1. Parse [ComponentLinks: url|url] from prompt
+    const linkMatch = prompt.match(/\[ComponentLinks:\s*([^\]]+)\]/i)
+    if (!linkMatch) return results
+
+    const urls = linkMatch[1].split('|').map(u => u.trim()).filter(Boolean)
+    log(`[RESOURCE] 🔗 Component links detected: ${urls.join(', ')}`)
+
+    for (const url of urls) {
+      try {
+        const normalised = url.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase()
+
+        // ── Try pre-verified GitHub registry first (always fast, zero rate-limits) ──
+        const registered = ResourceAgent.COMPONENT_REGISTRY[normalised]
+        if (registered?.raw) {
+          log(`[RESOURCE] 📚 Registry hit: ${normalised}`)
+          try {
+            const code = await this.fetchUrl(registered.raw, 6000)
+            if (code && code.length > 50) {
+              results.push({
+                source:       'github',
+                name:         this.slugToName(normalised),
+                description:  registered.desc,
+                code,
+                tags:         detectTags(code),
+                hasAnimation: /motion|gsap|animate|spring/i.test(code),
+                hasDarkMode:  /dark:|bg-zinc|bg-black/i.test(code),
+                hasTailwind:  /className/i.test(code),
+                fetchedAt:    new Date().toISOString(),
+              })
+              log(`[RESOURCE] ✅ Registry: extracted ${code.length} chars for ${this.slugToName(normalised)}`)
+              log(`[RESOURCE] 📦 Required deps: ${registered.deps.join(', ') || 'none'}`)
+              continue  // skip Firecrawl for this one
+            }
+          } catch { /* fall through to Firecrawl */ }
+        }
+
+        // ── Firecrawl live scrape ──────────────────────────────────────────
+        if (firecrawlKey) {
+          log(`[RESOURCE] 🔥 Firecrawl scraping: ${url}`)
+          const scrapeRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${firecrawlKey}` },
+            body: JSON.stringify({
+              url,
+              formats: ['markdown'],
+              onlyMainContent: true,
+              includeTags: ['code', 'pre'],
+            })
+          })
+          const scrapeData = await scrapeRes.json() as { success: boolean; data?: { markdown?: string } }
+
+          if (scrapeData.success && scrapeData.data?.markdown) {
+            const md = scrapeData.data.markdown
+            // Extract code blocks from markdown
+            const codeBlocks = [...md.matchAll(/```(?:tsx?|jsx?|js|ts|css|html)?\n([\s\S]*?)```/g)]
+              .map(m => m[1].trim())
+              .filter(c => c.length > 40)
+            const code = codeBlocks.join('\n\n// ── next block ──\n\n')
+
+            // Extract npm install commands
+            const npmMatch = md.match(/npm install ([^\n`]+)/i)
+            const deps = npmMatch ? npmMatch[1].trim().split(/\s+/).filter(d => !d.startsWith('-')) : []
+
+            if (code.length > 50) {
+              results.push({
+                source:       'github',
+                name:         this.slugToName(normalised),
+                description:  `Live-scraped from ${url}`,
+                code:         code.slice(0, 8000),
+                tags:         detectTags(code),
+                hasAnimation: /motion|gsap|animate|spring/i.test(code),
+                hasDarkMode:  /dark:|bg-zinc|bg-black/i.test(code),
+                hasTailwind:  /className/i.test(code),
+                fetchedAt:    new Date().toISOString(),
+              })
+              log(`[RESOURCE] ✅ Firecrawl: extracted ${code.length} chars + deps: ${deps.join(', ') || 'none'}`)
+            } else {
+              log(`[RESOURCE] ⚠️ Firecrawl: page had no usable code blocks for ${url}`)
+            }
+          }
+        } else {
+          log(`[RESOURCE] ⚠️ No Firecrawl key — using LLM memory for ${url}`)
+          // Fallback: inject URL as hint to BuilderAgent (LLM writes from memory)
+          results.push({
+            source: 'github', name: this.slugToName(normalised),
+            description: `Component reference: ${url} — implement faithfully from memory`,
+            code: `// COMPONENT REFERENCE: ${url}\n// Implement this component as accurately as possible based on its documented API and visual appearance.`,
+            tags: [], hasAnimation: false, hasDarkMode: true, hasTailwind: true, fetchedAt: new Date().toISOString(),
+          })
+        }
+      } catch (err) {
+        log(`[RESOURCE] ❌ Failed to scrape ${url}: ${err}`)
+      }
+    }
+
+    return results
+  }
+
+  /**
+   * Auto Governor — picks the best pre-verified stack for the given prompt.
+   * Used when [ComponentStrategy: auto] (user didn't paste links).
+   */
+  governorAutoSelect(prompt: string, log: (msg: string) => void): string {
+    const p = prompt.toLowerCase()
+    let deps: string[] = []
+    let summary = ''
+
+    if (/3d|three|r3f|particle|canvas|shader|immersive/.test(p)) {
+      deps = ResourceAgent.COMPONENT_REGISTRY['__governor__3d-landing']!.deps
+      summary = ResourceAgent.COMPONENT_REGISTRY['__governor__3d-landing']!.desc
+    } else if (/dashboard|analytics|saas|metric|chart|admin/.test(p)) {
+      deps = ResourceAgent.COMPONENT_REGISTRY['__governor__saas-dashboard']!.deps
+      summary = ResourceAgent.COMPONENT_REGISTRY['__governor__saas-dashboard']!.desc
+    } else if (/luxury|premium|high.end|fashion|jewelry|gold/.test(p)) {
+      deps = ResourceAgent.COMPONENT_REGISTRY['__governor__luxury-landing']!.deps
+      summary = ResourceAgent.COMPONENT_REGISTRY['__governor__luxury-landing']!.desc
+    } else {
+      // Default: always output a premium React Bits + Aceternity combo
+      deps = ['framer-motion', 'lucide-react', 'clsx']
+      summary = 'Aceternity-style glassmorphism + Framer Motion scroll reveals'
+    }
+
+    log(`[RESOURCE] 🧠 Senior Governor selected: ${summary}`)
+    log(`[RESOURCE] 📦 Auto-deps: ${deps.join(', ')}`)
+
+    return `\n\n## SENIOR GOVERNOR AUTO-SELECTION\n${summary}\nRequired packages: ${deps.join(', ')}\n` +
+      `Use React Bits (reactbits.dev), Aceternity UI, and Magic UI components as inspiration — implement their visual patterns directly in code without importing from their npm packages unless explicitly listed above.\n`
+  }
+
+  private slugToName(normalised: string): string {
+    const parts = normalised.split('/')
+    return parts[parts.length - 1]!
+      .replace(/-/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase())
+  }
+
+
 
   private detectIntent(prompt: string, template: string): string[] {
     const p = prompt.toLowerCase()

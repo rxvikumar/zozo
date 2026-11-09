@@ -19,4 +19,8 @@ export class ZozoVault {
   async getKey(provider: string): Promise<string | undefined> {
     return this.secrets.get(`${KEY_PREFIX}.${provider.toLowerCase()}`);
   }
+
+  async deleteKey(provider: string): Promise<void> {
+    await this.secrets.delete(`${KEY_PREFIX}.${provider.toLowerCase()}`);
+  }
 }
